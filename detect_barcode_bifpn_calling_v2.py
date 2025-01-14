@@ -1,41 +1,16 @@
-# Ultralytics YOLOv5 🚀, AGPL-3.0 license
-"""
-Run YOLOv5 detection inference on images, videos, directories, globs, YouTube, webcam, streams, etc.
-
-Usage - sources:
-    $ python detect.py --weights yolov5s.pt --source 0                               # webcam
-                                                     img.jpg                         # image
-                                                     vid.mp4                         # video
-                                                     screen                          # screenshot
-                                                     path/                           # directory
-                                                     list.txt                        # list of images
-                                                     list.streams                    # list of streams
-                                                     'path/*.jpg'                    # glob
-                                                     'https://youtu.be/LNwODJXcvt4'  # YouTube
-                                                     'rtsp://example.com/media.mp4'  # RTSP, RTMP, HTTP stream
-
-Usage - formats:
-    $ python detect.py --weights yolov5s.pt                 # PyTorch
-                                 yolov5s.torchscript        # TorchScript
-                                 yolov5s.onnx               # ONNX Runtime or OpenCV DNN with --dnn
-                                 yolov5s_openvino_model     # OpenVINO
-                                 yolov5s.engine             # TensorRT
-                                 yolov5s.mlpackage          # CoreML (macOS-only)
-                                 yolov5s_saved_model        # TensorFlow SavedModel
-                                 yolov5s.pb                 # TensorFlow GraphDef
-                                 yolov5s.tflite             # TensorFlow Lite
-                                 yolov5s_edgetpu.tflite     # TensorFlow Edge TPU
-                                 yolov5s_paddle_model       # PaddlePaddle
-"""
-
 import argparse
 import csv
+import json
 import os
 import platform
 import sys
+import time
 from pathlib import Path
 
+import numpy as np
 import torch
+
+from barcode_decoder.barcode_decode_v2 import BarcodeAnnotator
 
 FILE = Path(__file__).resolve()
 ROOT = FILE.parents[0]  # YOLOv5 root directory
@@ -58,12 +33,46 @@ from utils.general import (
     cv2,
     increment_path,
     non_max_suppression,
+    keep_one_non_max_suppression,
     print_args,
     scale_boxes,
     strip_optimizer,
     xyxy2xywh,
 )
+from myutils.find_angle_vertex import find_right_angle_vertex,sort_boxes_by_center_angle
 from utils.torch_utils import select_device, smart_inference_mode
+from myutils.point_mapping import get_transformed_box, get_transformed_box_four, get_transformed_quad_xyes_four, \
+    get_transformed_quad_xyes
+# from myutils.find_which_box2 import TableAffineClass,MarkerAffineClass
+from myutils.find_which_box_calling import TableAffineClass,MarkerAffineClass
+from pydantic import BaseModel
+from typing import Optional,List
+from dataclasses import dataclass,asdict
+'''
+返回的东西:
+    boxes: 转换后的或者是原始的，列表
+    angle: 角度，如果无tile,就是一个都是90的列表
+    table: 如果要求返回表格格式，则返回到底在哪个几个格子(row,col)
+    table_attr: 如果要求返回表格格式，则返回表格有几行几列rows,cols,col_width,row_height,top_left
+'''
+# class ResponseData(BaseModel):
+#     boxes:Optional[np.ndarray]=None
+#     angles:Optional[np.ndarray]=None
+#     table:Optional[dict]=None
+#     table_attr:Optional[dict]=None
+
+@dataclass
+class ResponseData:
+    def __init__(self):
+        self.boxes=None
+        self.angles=None
+        self.table=None
+        self.table_attr=None
+    def to_json(self):
+        return json.dumps(asdict(self))
+
+    def add_attribute(self,name,value):
+        setattr(self,name,value)
 
 
 @smart_inference_mode()
@@ -75,7 +84,7 @@ def run(
     conf_thres=0.25,  # confidence threshold
     iou_thres=0.45,  # NMS IOU threshold
     max_det=1000,  # maximum detections per image
-    device="",  # cuda device, i.e. 0 or 0,1,2,3 or cpu
+    device=None,  # cuda device, i.e. 0 or 0,1,2,3 or cpu
     view_img=False,  # show results
     save_txt=False,  # save results to *.txt
     save_format=0,  # save boxes coordinates in YOLO format or Pascal-VOC format (0 for YOLO and 1 for Pascal-VOC)
@@ -97,6 +106,11 @@ def run(
     half=False,  # use FP16 half-precision inference
     dnn=False,  # use OpenCV DNN for ONNX inference
     vid_stride=1,  # video frame-rate stride
+    tilt=False,  # 倾斜，判断是表格还是白纸那种类型
+    use_config=False,  # 是否使用配置文件
+    qr_anchor_config_path=None,  # 配置文件路径
+    class_to_use=None,
+    model=None
 ):
     """
     Runs YOLOv5 detection inference on various sources like images, videos, directories, streams, etc.
@@ -158,15 +172,14 @@ def run(
         source = check_file(source)  # download
 
     # Directories
-    save_dir = increment_path(Path(project) / name, exist_ok=exist_ok)  # increment run
-    (save_dir / "labels" if save_txt else save_dir).mkdir(parents=True, exist_ok=True)  # make dir
+    # save_dir = increment_path(Path(project) / name, exist_ok=exist_ok)  # increment run
+    # (save_dir / "labels" if save_txt else save_dir).mkdir(parents=True, exist_ok=True)  # make dir
 
     # Load model
-    device = select_device(device)
-    model = DetectMultiBackend(weights, device=device, dnn=dnn, data=data, fp16=half)
+    t_1=time.time()
     stride, names, pt = model.stride, model.names, model.pt
     imgsz = check_img_size(imgsz, s=stride)  # check image size
-
+    print('模型加载时间',time.time()-t_1) # 差不多0.2s左右。
     # Dataloader
     bs = 1  # batch_size
     if webcam:
@@ -194,7 +207,7 @@ def run(
 
         # Inference
         with dt[1]:
-            visualize = increment_path(save_dir / Path(path).stem, mkdir=True) if visualize else False
+            visualize = False
             if model.xml and im.shape[0] > 1:
                 pred = None
                 for image in ims:
@@ -202,31 +215,30 @@ def run(
                         pred = model(image, augment=augment, visualize=visualize).unsqueeze(0)
                     else:
                         pred = torch.cat((pred, model(image, augment=augment, visualize=visualize).unsqueeze(0)), dim=0)
+
+                    LOGGER.info(("\n" + "%11s" * 7) % ("Epoch", "GPU_mem", "box_loss", "obj_loss", "cls_loss", "Instances", "Size"))
                 pred = [pred, None]
             else:
                 pred = model(im, augment=augment, visualize=visualize)
         # NMS
         with dt[2]:
             pred = non_max_suppression(pred, conf_thres, iou_thres, classes, agnostic_nms, max_det=max_det)
+            # pred = keep_one_non_max_suppression(pred, conf_thres, iou_thres, classes, agnostic_nms, max_det=max_det)
 
         # Second-stage classifier (optional)
         # pred = utils.general.apply_classifier(pred, classifier_model, im, im0s)
 
-        # Define the path for the CSV file
-        csv_path = save_dir / "predictions.csv"
 
-        # Create or append to the CSV file
-        def write_to_csv(image_name, prediction, confidence):
-            """Writes prediction data for an image to a CSV file, appending if the file exists."""
-            data = {"Image Name": image_name, "Prediction": prediction, "Confidence": confidence}
-            with open(csv_path, mode="a", newline="") as f:
-                writer = csv.DictWriter(f, fieldnames=data.keys())
-                if not csv_path.is_file():
-                    writer.writeheader()
-                writer.writerow(data)
+        response_data=ResponseData()
 
         # Process predictions
         for i, det in enumerate(pred):  # per image
+
+            # 记录三个标记的字典
+            mark1_loc_list=[]
+            mark2_loc_list=[]
+            all_mark_loc_list=[]
+            mark_clazz_list=[]
             seen += 1
             if webcam:  # batch_size >= 1
                 p, im0, frame = path[i], im0s[i].copy(), dataset.count
@@ -235,12 +247,42 @@ def run(
                 p, im0, frame = path, im0s.copy(), getattr(dataset, "frame", 0)
 
             p = Path(p)  # to Path
-            save_path = str(save_dir / p.name)  # im.jpg
-            txt_path = str(save_dir / "labels" / p.stem) + ("" if dataset.mode == "image" else f"_{frame}")  # im.txt
             s += "{:g}x{:g} ".format(*im.shape[2:])  # print string
             gn = torch.tensor(im0.shape)[[1, 0, 1, 0]]  # normalization gain whwh
             imc = im0.copy() if save_crop else im0  # for save_crop
             annotator = Annotator(im0, line_width=line_thickness, example=str(names))
+            imc_bar=im0.copy()
+            barcode_annotator=BarcodeAnnotator(imc_bar, line_width=line_thickness, example=str(names))
+            topo_idx=0
+            topo_dict=dict()
+            qr_boxes=[]
+            quad_xyes=[]
+            multi_roi=[]
+            t_single=0.00
+
+            det_copy=det.clone()
+            if len(det_copy):
+                # Rescale boxes from img_size to im0 size
+                det_copy[:, :4] = scale_boxes(im.shape[2:], det_copy[:, :4], im0.shape).round()
+                for *xyxy, conf, cls in reversed(det_copy):
+                    c = int(cls)  # integer class
+                    if c==1:
+                        multi_roi.append((xyxy,p))
+
+
+            '''
+                存储多个码之后，尝试一把送进去看看效果，看看时间耗时在哪里。
+            '''
+            if len(multi_roi)>0:
+                # # 先把多个码的box画出来
+
+                multi_roi_input=[roi for roi,p in multi_roi ]
+                multi_p=[p for roi,p in multi_roi ]
+                start_t=time.time()
+                decode_strs,quad_xyes=barcode_annotator.barcode_decode_batch(multi_roi_input,multi_p[0])
+                print('batch_decode时间',time.time()-start_t)
+
+            iddx=0
             if len(det):
                 # Rescale boxes from img_size to im0 size
                 det[:, :4] = scale_boxes(im.shape[2:], det[:, :4], im0.shape).round()
@@ -257,55 +299,166 @@ def run(
                     confidence = float(conf)
                     confidence_str = f"{confidence:.2f}"
 
-                    if save_csv:
-                        write_to_csv(p.name, label, confidence_str)
+                    # todo 检测ROI 区域，进行解码
+                    # print('xyxy:', xyxy)  # 左上，右下两个点坐标。这个坐标是还原过后
+                    # 的
+                    if c==1:
+                        # decode_str,quad_xy,time3=barcode_annotator.barcode_decode_v2(xyxy,p)
+                        time3=0
+                        decode_str=decode_strs[iddx]
+                        quad_xy=quad_xyes[iddx]
+                        iddx+=1
+                        t_single+=time3
+                        multi_roi.append((xyxy,p))
+                        if decode_str!='' and quad_xy is not None:
+                            qr_boxes.append(xyxy)
+                            # quad_xyes.append(quad_xy)
+                    elif c==0:
+                        mark1_loc_list.append([int(xyxy[0]),int(xyxy[1]),int(xyxy[2]),int(xyxy[3])])
+                        all_mark_loc_list.append([int(xyxy[0]),int(xyxy[1]),int(xyxy[2]),int(xyxy[3])])
+                        mark_clazz_list.append(c) # 标记类别
+                        decode_str=''
+                    else :
+                        mark2_loc_list.append([int(xyxy[0]),int(xyxy[1]),int(xyxy[2]),int(xyxy[3])])
+                        all_mark_loc_list.append([int(xyxy[0]),int(xyxy[1]),int(xyxy[2]),int(xyxy[3])])
+                        mark_clazz_list.append(c) # 标记类别
+                        decode_str=''
 
-                    if save_txt:  # Write to file
-                        if save_format == 0:
-                            coords = (
-                                (xyxy2xywh(torch.tensor(xyxy).view(1, 4)) / gn).view(-1).tolist()
-                            )  # normalized xywh
-                        else:
-                            coords = (torch.tensor(xyxy).view(1, 4) / gn).view(-1).tolist()  # xyxy
-                        line = (cls, *coords, conf) if save_conf else (cls, *coords)  # label format
-                        with open(f"{txt_path}.txt", "a") as f:
-                            f.write(("%g " * len(line)).rstrip() % line + "\n")
+                    # if save_txt:  # Write to file
+                    #     if save_format == 0:
+                    #         coords = (
+                    #             (xyxy2xywh(torch.tensor(xyxy).view(1, 4)) / gn).view(-1).tolist()
+                    #         )  # normalized xywh
+                    #     else:
+                    #         coords = (torch.tensor(xyxy).view(1, 4) / gn).view(-1).tolist()  # xyxy
+                    #     line = (cls, *coords, conf) if save_conf else (cls, *coords)  # label format
+                    #     with open(f"{txt_path}.txt", "a") as f:
+                    #         f.write(("%g " * len(line)).rstrip() % line + "\n")
 
-                    if save_img or save_crop or view_img:  # Add bbox to image
-                        c = int(cls)  # integer class
-                        label = None if hide_labels else (names[c] if hide_conf else f"{names[c]} {conf:.2f}")
-                        annotator.box_label(xyxy, label, color=colors(c, True))
-                    if save_crop:
-                        save_one_box(xyxy, imc, file=save_dir / "crops" / names[c] / f"{p.stem}.jpg", BGR=True)
+                    # if save_img or save_crop or view_img:  # Add bbox to image
+                    #     c = int(cls)  # integer class
+                    #     label = None if hide_labels else (names[c] if hide_conf else f"{names[c]} {conf:.2f}")
+                        # label = None if hide_labels else (names[c])
 
-            # Stream results
-            im0 = annotator.result()
-            if view_img:
-                if platform.system() == "Linux" and p not in windows:
-                    windows.append(p)
-                    cv2.namedWindow(str(p), cv2.WINDOW_NORMAL | cv2.WINDOW_KEEPRATIO)  # allow window resize (Linux)
-                    cv2.resizeWindow(str(p), im0.shape[1], im0.shape[0])
-                cv2.imshow(str(p), im0)
-                cv2.waitKey(1)  # 1 millisecond
+                        # annotator.box_label(xyxy, label, color=colors(c, True))
+                        # annotator.box_label(xyxy, decode_str, color=colors(c, True))
 
-            # Save results (image with detections)
-            if save_img:
-                if dataset.mode == "image":
-                    cv2.imwrite(save_path, im0)
-                else:  # 'video' or 'stream'
-                    if vid_path[i] != save_path:  # new video
-                        vid_path[i] = save_path
-                        if isinstance(vid_writer[i], cv2.VideoWriter):
-                            vid_writer[i].release()  # release previous video writer
-                        if vid_cap:  # video
-                            fps = vid_cap.get(cv2.CAP_PROP_FPS)
-                            w = int(vid_cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-                            h = int(vid_cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-                        else:  # stream
-                            fps, w, h = 30, im0.shape[1], im0.shape[0]
-                        save_path = str(Path(save_path).with_suffix(".mp4"))  # force *.mp4 suffix on results videos
-                        vid_writer[i] = cv2.VideoWriter(save_path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (w, h))
-                    vid_writer[i].write(im0)
+                        # 打标,只针对能够解析出来的打标画框；并且标签写解析出来的label，单独存一张图片。
+                        # 用一个字典来存 那些解析出来的box。
+                        # barcode_annotator.barcode_decode_and_label(xyxy, label, color=colors(c, True))
+                        # barcode_annotator.barcode_decode_and_label(xyxy, decode_str, color=colors(c, True))
+
+                    # if save_crop:
+                    #     save_one_box(xyxy, imc, file=save_dir / "crops" / names[c] / f"{p.stem}.jpg", BGR=True)
+
+
+
+            # 再进行记录
+
+            # 记录三个标记的位置。处理三个boxes
+            if len(mark1_loc_list)==3 and len(mark2_loc_list)<1:
+                # class_to_use = opt.class_to_use
+                if use_config and qr_anchor_config_path:
+                    if class_to_use == "Marker":
+                        boxAffineClass = MarkerAffineClass(qr_anchor_config_path)
+                    else:
+                        boxAffineClass = TableAffineClass(qr_anchor_config_path)
+                else:
+                    if class_to_use == "Marker":
+                        boxAffineClass = MarkerAffineClass()
+                    else:
+                        boxAffineClass = TableAffineClass()
+
+                angle_box_dict=find_right_angle_vertex(*mark1_loc_list)
+
+                src_point=angle_box_dict.values()
+                src_point=np.array(list(src_point),dtype=np.float32)
+                src_point[:]=src_point[[1,2,0]]
+                dst_point=np.array(boxAffineClass.get_dst_point_four(),dtype=np.float32)[1:4]  #就拿mark1,mark2,mark3 就行
+                transformed_quad_xyes = get_transformed_quad_xyes(quad_xyes, src_point, dst_point)
+                transformed_boxes=get_transformed_box(qr_boxes,src_point,dst_point)
+                # response_data.boxes=transformed_boxes
+                response_data.add_attribute('boxes',transformed_boxes)
+                # 进行判断，到底使用什么处理方式
+
+                if class_to_use == "Marker":
+                    angle_rad=boxAffineClass.get_angle_via_quadxy(
+                         transformed_quad_xyes, tilt=tilt
+                    )
+                    # response_data.angles=angle_rad
+                    response_data.add_attribute('angles', angle_rad)
+                else:
+                    table_box_dict=boxAffineClass.get_table_boxes(
+                        transformed_boxes
+                    )
+                    # response_data.table=table_box_dict
+                    response_data.add_attribute('table', table_box_dict)
+            elif len(mark1_loc_list)==3 and len(mark2_loc_list)==1:
+                # Use the class specified in the command-line argument
+                # class_to_use = opt.class_to_use
+                if use_config and qr_anchor_config_path:
+                    if class_to_use == "Marker":
+                        boxAffineClass = MarkerAffineClass(qr_anchor_config_path)
+                    else:
+                        boxAffineClass = TableAffineClass(qr_anchor_config_path)
+                else:
+                    if class_to_use == "Marker":
+                        boxAffineClass = MarkerAffineClass()
+                    else:
+                        boxAffineClass = TableAffineClass()
+
+                sorted_boxes = sort_boxes_by_center_angle(all_mark_loc_list, mark_clazz_list)
+                src_point = np.array(list(sorted_boxes), dtype=np.float32)
+
+                dst_point = np.array(boxAffineClass.get_dst_point_four(), dtype=np.float32)
+                transformed_boxes = get_transformed_box_four(qr_boxes, src_point, dst_point)
+                transformed_quad_xyes = get_transformed_quad_xyes_four(quad_xyes, src_point, dst_point)
+                # response_data.boxes=transformed_boxes
+                response_data.add_attribute('boxes',transformed_boxes)
+
+                if class_to_use == "Marker":
+                    # Use MarkerAffineClass visualization method
+                    angle_rad=boxAffineClass.get_angle_via_quadxy(transformed_quad_xyes)
+                    # response_data.angles=angle_rad
+                    response_data.add_attribute('angles', angle_rad)
+                else:
+                    # Use TableAffineClass visualization method
+                    table_box_dict=boxAffineClass.get_table_boxes(
+                        transformed_boxes
+                    )
+                    # response_data.table=table_box_dict
+                    response_data.add_attribute('table', table_box_dict)
+            else:
+                # If no anchors, assume it's a plain paper form and return
+                pass
+            # # Stream results
+            # im0 = annotator.result()
+            # if view_img:
+            #     if platform.system() == "Linux" and p not in windows:
+            #         windows.append(p)
+            #         cv2.namedWindow(str(p), cv2.WINDOW_NORMAL | cv2.WINDOW_KEEPRATIO)  # allow window resize (Linux)
+            #         cv2.resizeWindow(str(p), im0.shape[1], im0.shape[0])
+            #     cv2.imshow(str(p), im0)
+            #     cv2.waitKey(1)  # 1 millisecond
+            #
+            # # Save results (image with detections)
+            # if save_img:
+            #     if dataset.mode == "image":
+            #         cv2.imwrite(save_path, im0)
+            #     else:  # 'video' or 'stream'
+            #         if vid_path[i] != save_path:  # new video
+            #             vid_path[i] = save_path
+            #             if isinstance(vid_writer[i], cv2.VideoWriter):
+            #                 vid_writer[i].release()  # release previous video writer
+            #             if vid_cap:  # video
+            #                 fps = vid_cap.get(cv2.CAP_PROP_FPS)
+            #                 w = int(vid_cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            #                 h = int(vid_cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            #             else:  # stream
+            #                 fps, w, h = 30, im0.shape[1], im0.shape[0]
+            #             save_path = str(Path(save_path).with_suffix(".mp4"))  # force *.mp4 suffix on results videos
+            #             vid_writer[i] = cv2.VideoWriter(save_path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (w, h))
+            #         vid_writer[i].write(im0)
 
         # Print time (inference-only)
         LOGGER.info(f"{s}{'' if len(det) else '(no detections), '}{dt[1].dt * 1E3:.1f}ms")
@@ -313,11 +466,16 @@ def run(
     # Print results
     t = tuple(x.t / seen * 1e3 for x in dt)  # speeds per image
     LOGGER.info(f"Speed: %.1fms pre-process, %.1fms inference, %.1fms NMS per image at shape {(1, 3, *imgsz)}" % t)
-    if save_txt or save_img:
-        s = f"\n{len(list(save_dir.glob('labels/*.txt')))} labels saved to {save_dir / 'labels'}" if save_txt else ""
-        LOGGER.info(f"Results saved to {colorstr('bold', save_dir)}{s}")
-    if update:
-        strip_optimizer(weights[0])  # update model (to fix SourceChangeWarning)
+    angles=response_data.angles
+    if isinstance(angles,np.ndarray):
+        angles=angles.tolist()
+    boxes=response_data.boxes
+    if isinstance(boxes,np.ndarray):
+        boxes=boxes.tolist()
+    return {
+        'angles':angles,
+        'boxes':boxes,
+    }
 
 
 def parse_opt():
@@ -365,28 +523,18 @@ def parse_opt():
         ```
     """
     parser = argparse.ArgumentParser()
-    # parser.add_argument("--weights", nargs="+", type=str, default=ROOT / "yolov5s.pt", help="model path or triton URL")
-    # parser.add_argument("--weights", nargs="+", type=str, default=ROOT / "yolov5l.pt", help="model path or triton URL")
-
-    #解码条形码
-    # parser.add_argument("--weights", nargs="+", type=str, default=ROOT / "runs/train/exp5/weights/best.pt", help="model path or triton URL")
-    parser.add_argument("--weights", nargs="+", type=str, default=ROOT / "runs/train/exp6/weights/best.pt", help="model path or triton URL")
-
-    parser.add_argument("--source", type=str, default=ROOT / "data/images", help="file/dir/URL/glob/screen/0(webcam)")
-    parser.add_argument("--data", type=str, default=ROOT / "data/coco128.yaml", help="(optional) dataset.yaml path")
-    parser.add_argument("--imgsz", "--img", "--img-size", nargs="+", type=int, default=[640], help="inference size h,w")
-    parser.add_argument("--conf-thres", type=float, default=0.25, help="confidence threshold")
-    parser.add_argument("--iou-thres", type=float, default=0.45, help="NMS IoU threshold")
+    parser.add_argument("--weights", nargs="+", type=str, default=ROOT / "runs/train/exp119/weights/best.pt", help="model path or triton URL")
+    parser.add_argument("--source", type=str, default=ROOT / "data/images/多码", help="file/dir/URL/glob/screen/0(webcam)")
+    parser.add_argument("--data", type=str, default=ROOT / "data/qr-custom-data.yaml", help="(optional) dataset.yaml path")
+    parser.add_argument("--enable_clear", type=bool, default=True, help="clear the resolution,1280")
+    parser.add_argument("--conf-thres", type=float, default=0.7, help="confidence threshold")
+    parser.add_argument("--iou-thres", type=float, default=0.45, help="NMS IoU threshold") # 这个大一点，否则容易过滤挺多
     parser.add_argument("--max-det", type=int, default=1000, help="maximum detections per image")
-    parser.add_argument("--device", default="", help="cuda device, i.e. 0 or 0,1,2,3 or cpu")
+    parser.add_argument("--device", default="cpu", help="cuda device, i.e. 0 or 0,1,2,3 or cpu")
+    # parser.add_argument("--device", default="1", help="cuda device, i.e. 0 or 0,1,2,3 or cpu")
     parser.add_argument("--view-img", action="store_true", help="show results")
     parser.add_argument("--save-txt", action="store_true", help="save results to *.txt")
-    parser.add_argument(
-        "--save-format",
-        type=int,
-        default=0,
-        help="whether to save boxes coordinates in YOLO format or Pascal-VOC format when save-txt is True, 0 for YOLO and 1 for Pascal-VOC",
-    )
+    parser.add_argument( "--save-format",type=int,default=0,help="whether to save boxes coordinates in YOLO format or Pascal-VOC format when save-txt is True, 0 for YOLO and 1 for Pascal-VOC",)
     parser.add_argument("--save-csv", action="store_true", help="save results in CSV format")
     parser.add_argument("--save-conf", action="store_true", help="save confidences in --save-txt labels")
     parser.add_argument("--save-crop", action="store_true", help="save cropped prediction boxes")
@@ -395,6 +543,7 @@ def parse_opt():
     parser.add_argument("--agnostic-nms", action="store_true", help="class-agnostic NMS")
     parser.add_argument("--augment", action="store_true", help="augmented inference")
     parser.add_argument("--visualize", action="store_true", help="visualize features")
+    # parser.add_argument("--visualize", action="store_true",default='True', help="visualize features")
     parser.add_argument("--update", action="store_true", help="update all models")
     parser.add_argument("--project", default=ROOT / "runs/detect", help="save results to project/name")
     parser.add_argument("--name", default="exp", help="save results to project/name")
@@ -405,39 +554,31 @@ def parse_opt():
     parser.add_argument("--half", action="store_true", help="use FP16 half-precision inference")
     parser.add_argument("--dnn", action="store_true", help="use OpenCV DNN for ONNX inference")
     parser.add_argument("--vid-stride", type=int, default=1, help="video frame-rate stride")
+    parser.add_argument("--tilt", type=bool, default=False, help="qrcode tilt or not")
+    parser.add_argument("--use_config", type=bool, default=True, help="whether to use configuration file")
+    # parser.add_argument("--qr_anchor_config_path", type=str, default=ROOT/'config/qr_anchor_config.yaml', help="path to the configuration file")
+    parser.add_argument("--qr_anchor_config_path", type=str, default=ROOT/'config/qr_anchor_config_transparent_paper.yaml', help="path to the configuration file")
+    parser.add_argument("--class_to_use", type=str, choices=["Table", "Marker"], default="Marker",
+                        help="Choose which class to use for processing: 'Table' or 'Marker'")
     opt = parser.parse_args()
+    if opt.enable_clear==True:
+        opt.imgsz=[1280]
+    del opt.enable_clear
     opt.imgsz *= 2 if len(opt.imgsz) == 1 else 1  # expand
     print_args(vars(opt))
     return opt
 
 
 def main(opt):
-    """
-    Executes YOLOv5 model inference based on provided command-line arguments, validating dependencies before running.
-
-    Args:
-        opt (argparse.Namespace): Command-line arguments for YOLOv5 detection. See function `parse_opt` for details.
-
-    Returns:
-        None
-
-    Note:
-        This function performs essential pre-execution checks and initiates the YOLOv5 detection process based on user-specified
-        options. Refer to the usage guide and examples for more information about different sources and formats at:
-        https://github.com/ultralytics/ultralytics
-
-    Example usage:
-
-    ```python
-    if __name__ == "__main__":
-        opt = parse_opt()
-        main(opt)
-    ```
-    """
     check_requirements(ROOT / "requirements.txt", exclude=("tensorboard", "thop"))
     run(**vars(opt))
 
 
 if __name__ == "__main__":
-    opt = parse_opt()
-    main(opt)
+
+    for i in range(10):
+        start_time=time.time()
+        opt = parse_opt()
+        main(opt)
+        end_time=time.time()
+        print('完成时间：',end_time-start_time)

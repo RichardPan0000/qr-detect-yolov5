@@ -1,41 +1,16 @@
-# Ultralytics YOLOv5 🚀, AGPL-3.0 license
-"""
-Run YOLOv5 detection inference on images, videos, directories, globs, YouTube, webcam, streams, etc.
-
-Usage - sources:
-    $ python detect.py --weights yolov5s.pt --source 0                               # webcam
-                                                     img.jpg                         # image
-                                                     vid.mp4                         # video
-                                                     screen                          # screenshot
-                                                     path/                           # directory
-                                                     list.txt                        # list of images
-                                                     list.streams                    # list of streams
-                                                     'path/*.jpg'                    # glob
-                                                     'https://youtu.be/LNwODJXcvt4'  # YouTube
-                                                     'rtsp://example.com/media.mp4'  # RTSP, RTMP, HTTP stream
-
-Usage - formats:
-    $ python detect.py --weights yolov5s.pt                 # PyTorch
-                                 yolov5s.torchscript        # TorchScript
-                                 yolov5s.onnx               # ONNX Runtime or OpenCV DNN with --dnn
-                                 yolov5s_openvino_model     # OpenVINO
-                                 yolov5s.engine             # TensorRT
-                                 yolov5s.mlpackage          # CoreML (macOS-only)
-                                 yolov5s_saved_model        # TensorFlow SavedModel
-                                 yolov5s.pb                 # TensorFlow GraphDef
-                                 yolov5s.tflite             # TensorFlow Lite
-                                 yolov5s_edgetpu.tflite     # TensorFlow Edge TPU
-                                 yolov5s_paddle_model       # PaddlePaddle
-"""
 
 import argparse
 import csv
 import os
 import platform
 import sys
+import time
 from pathlib import Path
 
+import numpy as np
 import torch
+
+from barcode_decoder.barcode_decode_v2 import BarcodeAnnotator
 
 FILE = Path(__file__).resolve()
 ROOT = FILE.parents[0]  # YOLOv5 root directory
@@ -58,14 +33,18 @@ from utils.general import (
     cv2,
     increment_path,
     non_max_suppression,
+    keep_one_non_max_suppression,
     print_args,
     scale_boxes,
     strip_optimizer,
     xyxy2xywh,
 )
+from myutils.find_angle_vertex import find_right_angle_vertex,sort_boxes_by_corners,sort_boxes_to_rectangle,sort_boxes_to_fixed_order,sort_boxes_by_center_angle
 from utils.torch_utils import select_device, smart_inference_mode
-
-
+from myutils.topology_util import make_topology
+from myutils.point_mapping import get_transformed_box, get_transformed_box_four, get_transformed_quad_xyes_four, \
+    get_transformed_quad_xyes
+from myutils.find_which_box2 import TableAffineClass,MarkerAffineClass
 @smart_inference_mode()
 def run(
     weights=ROOT / "yolov5s.pt",  # model path or triton URL
@@ -97,6 +76,10 @@ def run(
     half=False,  # use FP16 half-precision inference
     dnn=False,  # use OpenCV DNN for ONNX inference
     vid_stride=1,  # video frame-rate stride
+    tilt=False,  # 倾斜，判断是表格还是白纸那种类型
+    use_config=False,  # 是否使用配置文件
+    qr_anchor_config_path=None,  # 配置文件路径
+    class_to_use=None
 ):
     """
     Runs YOLOv5 detection inference on various sources like images, videos, directories, streams, etc.
@@ -202,12 +185,15 @@ def run(
                         pred = model(image, augment=augment, visualize=visualize).unsqueeze(0)
                     else:
                         pred = torch.cat((pred, model(image, augment=augment, visualize=visualize).unsqueeze(0)), dim=0)
+
+                    LOGGER.info(("\n" + "%11s" * 7) % ("Epoch", "GPU_mem", "box_loss", "obj_loss", "cls_loss", "Instances", "Size"))
                 pred = [pred, None]
             else:
                 pred = model(im, augment=augment, visualize=visualize)
         # NMS
         with dt[2]:
             pred = non_max_suppression(pred, conf_thres, iou_thres, classes, agnostic_nms, max_det=max_det)
+            # pred = keep_one_non_max_suppression(pred, conf_thres, iou_thres, classes, agnostic_nms, max_det=max_det)
 
         # Second-stage classifier (optional)
         # pred = utils.general.apply_classifier(pred, classifier_model, im, im0s)
@@ -227,6 +213,12 @@ def run(
 
         # Process predictions
         for i, det in enumerate(pred):  # per image
+
+            # 记录三个标记的字典
+            mark1_loc_list=[]
+            mark2_loc_list=[]
+            all_mark_loc_list=[]
+            mark_clazz_list=[]
             seen += 1
             if webcam:  # batch_size >= 1
                 p, im0, frame = path[i], im0s[i].copy(), dataset.count
@@ -241,6 +233,12 @@ def run(
             gn = torch.tensor(im0.shape)[[1, 0, 1, 0]]  # normalization gain whwh
             imc = im0.copy() if save_crop else im0  # for save_crop
             annotator = Annotator(im0, line_width=line_thickness, example=str(names))
+            imc_bar=im0.copy()
+            barcode_annotator=BarcodeAnnotator(imc_bar, line_width=line_thickness, example=str(names))
+            topo_idx=0
+            topo_dict=dict()
+            qr_boxes=[]
+            quad_xyes=[]
             if len(det):
                 # Rescale boxes from img_size to im0 size
                 det[:, :4] = scale_boxes(im.shape[2:], det[:, :4], im0.shape).round()
@@ -256,6 +254,33 @@ def run(
                     label = names[c] if hide_conf else f"{names[c]}"
                     confidence = float(conf)
                     confidence_str = f"{confidence:.2f}"
+
+                    # todo 检测ROI 区域，进行解码
+                    # print('xyxy:', xyxy)  # 左上，右下两个点坐标。这个坐标是还原过后
+                    # 的
+                    if c==1:
+                        decode_str,quad_xy=barcode_annotator.barcode_decode(xyxy,p)
+                        if decode_str!='' and quad_xy is not None:
+                            qr_boxes.append(xyxy)
+                            quad_xyes.append(quad_xy)
+                    elif c==0:
+                        mark1_loc_list.append([int(xyxy[0]),int(xyxy[1]),int(xyxy[2]),int(xyxy[3])])
+                        all_mark_loc_list.append([int(xyxy[0]),int(xyxy[1]),int(xyxy[2]),int(xyxy[3])])
+                        mark_clazz_list.append(c) # 标记类别
+                        decode_str=''
+                    else :
+                        mark2_loc_list.append([int(xyxy[0]),int(xyxy[1]),int(xyxy[2]),int(xyxy[3])])
+                        all_mark_loc_list.append([int(xyxy[0]),int(xyxy[1]),int(xyxy[2]),int(xyxy[3])])
+                        mark_clazz_list.append(c) # 标记类别
+                        decode_str=''
+
+                    # 画拓扑图
+                    if decode_str!='':
+                        center_x=(xyxy[0]+xyxy[2])/2
+                        center_y=(xyxy[1]+xyxy[3])/2
+                        topo_dict[topo_idx]=((center_x,center_y),decode_str)
+                        topo_idx+=1
+                        pass
 
                     if save_csv:
                         write_to_csv(p.name, label, confidence_str)
@@ -274,10 +299,108 @@ def run(
                     if save_img or save_crop or view_img:  # Add bbox to image
                         c = int(cls)  # integer class
                         label = None if hide_labels else (names[c] if hide_conf else f"{names[c]} {conf:.2f}")
-                        annotator.box_label(xyxy, label, color=colors(c, True))
+                        # label = None if hide_labels else (names[c])
+
+                        # annotator.box_label(xyxy, label, color=colors(c, True))
+                        annotator.box_label(xyxy, decode_str, color=colors(c, True))
+
+                        # 打标,只针对能够解析出来的打标画框；并且标签写解析出来的label，单独存一张图片。
+                        # 用一个字典来存 那些解析出来的box。
+                        # barcode_annotator.barcode_decode_and_label(xyxy, label, color=colors(c, True))
+                        # barcode_annotator.barcode_decode_and_label(xyxy, decode_str, color=colors(c, True))
+
                     if save_crop:
                         save_one_box(xyxy, imc, file=save_dir / "crops" / names[c] / f"{p.stem}.jpg", BGR=True)
 
+            if len(topo_dict) >0:
+                make_topology(pos_dict=topo_dict, fig_save_dir=save_dir / "topology.jpg")
+
+
+            # 记录三个标记的位置。处理三个boxes
+            if len(mark1_loc_list)==3 and len(mark2_loc_list)<1:
+                class_to_use = opt.class_to_use
+                if use_config and qr_anchor_config_path:
+                    if class_to_use == "Marker":
+                        boxAffineClass = MarkerAffineClass(qr_anchor_config_path)
+                    else:
+                        boxAffineClass = TableAffineClass(qr_anchor_config_path)
+                else:
+                    if class_to_use == "Marker":
+                        boxAffineClass = MarkerAffineClass()
+                    else:
+                        boxAffineClass = TableAffineClass()
+
+                angle_box_dict=find_right_angle_vertex(*mark1_loc_list)
+
+                src_point=angle_box_dict.values()
+                src_point=np.array(list(src_point),dtype=np.float32)
+                print('src_point',src_point)
+                src_point[:]=src_point[[1,2,0]]
+                dst_point=np.array(boxAffineClass.get_dst_point_four(),dtype=np.float32)[1:4]  #就拿mark1,mark2,mark3 就行
+                transformed_quad_xyes = get_transformed_quad_xyes(quad_xyes, src_point, dst_point)
+                transformed_boxes=get_transformed_box(qr_boxes,src_point,dst_point)
+
+                # 进行判断，到底使用什么处理方式
+
+                if class_to_use == "Marker":
+                    boxAffineClass.visualize_markers_and_boxes(
+                        transformed_boxes, transformed_quad_xyes,
+                        save=True, file_name=p.stem,
+                        save_dir=save_dir, tilt=tilt
+                    )
+                else:
+                    boxAffineClass.visualize_table_and_boxes_v3(
+                        transformed_boxes, transformed_quad_xyes,
+                        save=True, file_name=p.stem,
+                        save_dir=save_dir, tilt=tilt
+                    )
+                # boxAffineClass.visualize_table_and_boxes_v2(transformed_boxes,save=True,file_name=p.stem,save_dir=save_dir)
+            elif len(mark1_loc_list)==3 and len(mark2_loc_list)==1:
+                # Use the class specified in the command-line argument
+                class_to_use = opt.class_to_use
+                if use_config and qr_anchor_config_path:
+                    if class_to_use == "Marker":
+                        boxAffineClass = MarkerAffineClass(qr_anchor_config_path)
+                    else:
+                        boxAffineClass = TableAffineClass(qr_anchor_config_path)
+                else:
+                    if class_to_use == "Marker":
+                        boxAffineClass = MarkerAffineClass()
+                    else:
+                        boxAffineClass = TableAffineClass()
+
+                sorted_boxes = sort_boxes_by_center_angle(all_mark_loc_list, mark_clazz_list)
+                src_point = np.array(list(sorted_boxes), dtype=np.float32)
+                print('src_point', src_point)
+
+                if class_to_use == "Marker":
+                    # Use MarkerAffineClass visualization method
+                    dst_point = np.array(boxAffineClass.get_dst_point_four(), dtype=np.float32)
+                    transformed_boxes = get_transformed_box_four(qr_boxes, src_point, dst_point)
+                    transformed_quad_xyes = get_transformed_quad_xyes_four(quad_xyes, src_point, dst_point)
+                    boxAffineClass.visualize_markers_and_boxes(
+                        transformed_boxes, transformed_quad_xyes,
+                        save=True, file_name=p.stem,
+                        save_dir=save_dir, tilt=tilt
+                    )
+                else:
+                    # Use TableAffineClass visualization method
+                    dst_point = np.array(boxAffineClass.get_dst_point_four(), dtype=np.float32)
+                    transformed_boxes = get_transformed_box_four(qr_boxes, src_point, dst_point)
+                    transformed_quad_xyes = get_transformed_quad_xyes_four(quad_xyes, src_point, dst_point)
+                    boxAffineClass.visualize_table_and_boxes_v3(
+                        transformed_boxes, transformed_quad_xyes,
+                        save=True, file_name=p.stem,
+                        save_dir=save_dir, tilt=tilt
+                    )
+                    # boxAffineClass.visualize_table_and_boxes_v2(
+                    #     transformed_boxes,
+                    #     save=True, file_name=p.stem,
+                    #     save_dir=save_dir, tilt=tilt
+                    # )
+            else:
+                # If no anchors, assume it's a plain paper form and return
+                pass
             # Stream results
             im0 = annotator.result()
             if view_img:
@@ -369,24 +492,49 @@ def parse_opt():
     # parser.add_argument("--weights", nargs="+", type=str, default=ROOT / "yolov5l.pt", help="model path or triton URL")
 
     #解码条形码
-    # parser.add_argument("--weights", nargs="+", type=str, default=ROOT / "runs/train/exp5/weights/best.pt", help="model path or triton URL")
-    parser.add_argument("--weights", nargs="+", type=str, default=ROOT / "runs/train/exp6/weights/best.pt", help="model path or triton URL")
+    # parser.add_argument("--weights", nargs="+", type=str, default=ROOT / "runs/train/exp7/weights/best.pt", help="model path or triton URL")
+    # parser.add_argument("--weights", nargs="+", type=str, default=ROOT / "runs/train/exp27/weights/best.pt", help="model path or triton URL")  #
 
-    parser.add_argument("--source", type=str, default=ROOT / "data/images", help="file/dir/URL/glob/screen/0(webcam)")
-    parser.add_argument("--data", type=str, default=ROOT / "data/coco128.yaml", help="(optional) dataset.yaml path")
-    parser.add_argument("--imgsz", "--img", "--img-size", nargs="+", type=int, default=[640], help="inference size h,w")
-    parser.add_argument("--conf-thres", type=float, default=0.25, help="confidence threshold")
-    parser.add_argument("--iou-thres", type=float, default=0.45, help="NMS IoU threshold")
+    # parser.add_argument("--weights", nargs="+", type=str, default=ROOT / "runs/train/exp54/weights/best.pt", help="model path or triton URL")
+    # parser.add_argument("--weights", nargs="+", type=str, default=ROOT / "runs/train/exp58/weights/best.pt", help="model path or triton URL")
+    # parser.add_argument("--weights", nargs="+", type=str, default=ROOT / "runs/train/exp87/weights/best.pt", help="model path or triton URL")
+    # parser.add_argument("--weights", nargs="+", type=str, default=ROOT / "runs/train/exp95/weights/best.pt", help="model path or triton URL")
+    # parser.add_argument("--weights", nargs="+", type=str, default=ROOT / "runs/train/exp100/weights/best.pt", help="model path or triton URL")
+    parser.add_argument("--weights", nargs="+", type=str, default=ROOT / "runs/train/exp119/weights/best.pt", help="model path or triton URL")
+
+    # parser.add_argument("--source", type=str, default=ROOT / "data/images/235", help="file/dir/URL/glob/screen/0(webcam)")
+    # parser.add_argument("--source", type=str, default=ROOT / "data/images/weini2", help="file/dir/URL/glob/screen/0(webcam)")
+    # parser.add_argument("--source", type=str, default=ROOT / "data/images/weini3", help="file/dir/URL/glob/screen/0(webcam)")
+    # parser.add_argument("--source", type=str, default=ROOT / "data/images/weini4", help="file/dir/URL/glob/screen/0(webcam)")
+    # parser.add_argument("--source", type=str, default=ROOT / "data/images/four-mark-weini", help="file/dir/URL/glob/screen/0(webcam)")
+    # parser.add_argument("--source", type=str, default=ROOT / "data/images/多码", help="file/dir/URL/glob/screen/0(webcam)")
+    parser.add_argument("--source", type=str, default=ROOT / "data/images/transparent_paper", help="file/dir/URL/glob/screen/0(webcam)")
+    # parser.add_argument("--source", type=str, default=ROOT / "data/images/图纸", help="file/dir/URL/glob/screen/0(webcam)")
+    # parser.add_argument("--source", type=str, default=ROOT / "data/images/实际", help="file/dir/URL/glob/screen/0(webcam)")
+    # parser.add_argument("--source", type=str, default=ROOT / "data/images/图纸多码", help="file/dir/URL/glob/screen/0(webcam)")
+    # parser.add_argument("--source", type=str, default=ROOT / "data/images/real_qrcode", help="file/dir/URL/glob/screen/0(webcam)")
+    # parser.add_argument("--source", type=str, default=ROOT / "data/images/multi_size_qr", help="file/dir/URL/glob/screen/0(webcam)")
+    # parser.add_argument("--source", type=str, default=ROOT / "data/images/tuzhiduoma", help="file/dir/URL/glob/screen/0(webcam)")
+    # parser.add_argument("--source", type=str, default=ROOT / "data/images/一拖二四", help="file/dir/URL/glob/screen/0(webcam)")
+    # parser.add_argument("--source", type=str, default=ROOT / "data/images/白纸", help="file/dir/URL/glob/screen/0(webcam)")
+    parser.add_argument("--data", type=str, default=ROOT / "data/qr-custom-data.yaml", help="(optional) dataset.yaml path")
+    parser.add_argument("--enable_clear", type=bool, default=True, help="clear the resolution,1280")
+    # parser.add_argument("--enable_clear", type=bool, default=False, help="clear the resolution,1280")
+
+    # parser.add_argument("--conf-thres", type=float, default=0.25, help="confidence threshold")
+    parser.add_argument("--conf-thres", type=float, default=0.7, help="confidence threshold")
+    # parser.add_argument("--conf-thres", type=float, default=0.5, help="confidence threshold")
+    # parser.add_argument("--iou-thres", type=float, default=0.25, help="NMS IoU threshold")
+    # parser.add_argument("--iou-thres", type=float, default=0.30, help="NMS IoU threshold")
+    parser.add_argument("--iou-thres", type=float, default=0.45, help="NMS IoU threshold") # 这个大一点，否则容易过滤挺多
+    # parser.add_argument("--iou-thres", type=float, default=0.1, help="NMS IoU threshold")
+    # parser.add_argument("--iou-thres", type=float, default=0, help="NMS IoU threshold")
     parser.add_argument("--max-det", type=int, default=1000, help="maximum detections per image")
-    parser.add_argument("--device", default="", help="cuda device, i.e. 0 or 0,1,2,3 or cpu")
+    parser.add_argument("--device", default="cpu", help="cuda device, i.e. 0 or 0,1,2,3 or cpu")
+    # parser.add_argument("--device", default="1", help="cuda device, i.e. 0 or 0,1,2,3 or cpu")
     parser.add_argument("--view-img", action="store_true", help="show results")
     parser.add_argument("--save-txt", action="store_true", help="save results to *.txt")
-    parser.add_argument(
-        "--save-format",
-        type=int,
-        default=0,
-        help="whether to save boxes coordinates in YOLO format or Pascal-VOC format when save-txt is True, 0 for YOLO and 1 for Pascal-VOC",
-    )
+    parser.add_argument( "--save-format",type=int,default=0,help="whether to save boxes coordinates in YOLO format or Pascal-VOC format when save-txt is True, 0 for YOLO and 1 for Pascal-VOC",)
     parser.add_argument("--save-csv", action="store_true", help="save results in CSV format")
     parser.add_argument("--save-conf", action="store_true", help="save confidences in --save-txt labels")
     parser.add_argument("--save-crop", action="store_true", help="save cropped prediction boxes")
@@ -395,6 +543,7 @@ def parse_opt():
     parser.add_argument("--agnostic-nms", action="store_true", help="class-agnostic NMS")
     parser.add_argument("--augment", action="store_true", help="augmented inference")
     parser.add_argument("--visualize", action="store_true", help="visualize features")
+    # parser.add_argument("--visualize", action="store_true",default='True', help="visualize features")
     parser.add_argument("--update", action="store_true", help="update all models")
     parser.add_argument("--project", default=ROOT / "runs/detect", help="save results to project/name")
     parser.add_argument("--name", default="exp", help="save results to project/name")
@@ -405,7 +554,16 @@ def parse_opt():
     parser.add_argument("--half", action="store_true", help="use FP16 half-precision inference")
     parser.add_argument("--dnn", action="store_true", help="use OpenCV DNN for ONNX inference")
     parser.add_argument("--vid-stride", type=int, default=1, help="video frame-rate stride")
+    parser.add_argument("--tilt", type=bool, default=False, help="qrcode tilt or not")
+    parser.add_argument("--use_config", type=bool, default=True, help="whether to use configuration file")
+    # parser.add_argument("--qr_anchor_config_path", type=str, default=ROOT/'config/qr_anchor_config.yaml', help="path to the configuration file")
+    parser.add_argument("--qr_anchor_config_path", type=str, default=ROOT/'config/qr_anchor_config_transparent_paper.yaml', help="path to the configuration file")
+    parser.add_argument("--class_to_use", type=str, choices=["Table", "Marker"], default="Marker",
+                        help="Choose which class to use for processing: 'Table' or 'Marker'")
     opt = parser.parse_args()
+    if opt.enable_clear==True:
+        opt.imgsz=[1280]
+    del opt.enable_clear
     opt.imgsz *= 2 if len(opt.imgsz) == 1 else 1  # expand
     print_args(vars(opt))
     return opt
@@ -439,5 +597,8 @@ def main(opt):
 
 
 if __name__ == "__main__":
+    start_time=time.time()
     opt = parse_opt()
     main(opt)
+    end_time=time.time()
+    print('完成时间：',end_time-start_time)

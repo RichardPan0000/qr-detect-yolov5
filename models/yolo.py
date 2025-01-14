@@ -48,6 +48,8 @@ from models.common import (
     GhostBottleneck,
     GhostConv,
     Proto,
+    BiFPN_Add2,
+    BiFPN_Add3
 )
 from models.experimental import MixConv2d
 from utils.autoanchor import check_anchor_order
@@ -433,6 +435,8 @@ def parse_model(d, ch):
             args = [ch[f]]
         elif m is Concat:
             c2 = sum(ch[x] for x in f)
+        elif m in[BiFPN_Add2,BiFPN_Add3]:
+            c2 = max([ch[x] for x in f])
         # TODO: channel, gw, gd
         elif m in {Detect, Segment}:
             args.append([ch[x] for x in f])

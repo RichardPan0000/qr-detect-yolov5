@@ -37,6 +37,8 @@ from pathlib import Path
 
 import torch
 
+from barcode_decoder.barcode_decode_v2 import BarcodeAnnotator
+
 FILE = Path(__file__).resolve()
 ROOT = FILE.parents[0]  # YOLOv5 root directory
 if str(ROOT) not in sys.path:
@@ -64,6 +66,7 @@ from utils.general import (
     xyxy2xywh,
 )
 from utils.torch_utils import select_device, smart_inference_mode
+from myutils.topology_util import make_topology
 
 
 @smart_inference_mode()
@@ -205,6 +208,8 @@ def run(
                 pred = [pred, None]
             else:
                 pred = model(im, augment=augment, visualize=visualize)
+
+        LOGGER.info(("\n" + "%11s" * 7) % ("Epoch", "GPU_mem", "box_loss", "obj_loss", "cls_loss", "Instances", "Size"))
         # NMS
         with dt[2]:
             pred = non_max_suppression(pred, conf_thres, iou_thres, classes, agnostic_nms, max_det=max_det)
@@ -241,6 +246,10 @@ def run(
             gn = torch.tensor(im0.shape)[[1, 0, 1, 0]]  # normalization gain whwh
             imc = im0.copy() if save_crop else im0  # for save_crop
             annotator = Annotator(im0, line_width=line_thickness, example=str(names))
+            imc_bar=im0.copy()
+            barcode_annotator=BarcodeAnnotator(imc_bar, line_width=line_thickness, example=str(names))
+            topo_idx=0
+            topo_dict=dict()
             if len(det):
                 # Rescale boxes from img_size to im0 size
                 det[:, :4] = scale_boxes(im.shape[2:], det[:, :4], im0.shape).round()
@@ -256,6 +265,22 @@ def run(
                     label = names[c] if hide_conf else f"{names[c]}"
                     confidence = float(conf)
                     confidence_str = f"{confidence:.2f}"
+
+                    # todo 检测ROI 区域，进行解码
+                    # print('xyxy:', xyxy)  # 左上，右下两个点坐标。这个坐标是还原过后
+                    # 的
+                    # if c==1:
+                    #     decode_str=barcode_annotator.barcode_decode(xyxy,p)
+                    # else:
+                    #     decode_str=''
+
+                    # 画拓扑图
+                    # if decode_str!='':
+                    #     center_x=(xyxy[0]+xyxy[2])/2
+                    #     center_y=(xyxy[1]+xyxy[3])/2
+                    #     topo_dict[topo_idx]=((center_x,center_y),decode_str)
+                    #     topo_idx+=1
+                    #     pass
 
                     if save_csv:
                         write_to_csv(p.name, label, confidence_str)
@@ -273,10 +298,22 @@ def run(
 
                     if save_img or save_crop or view_img:  # Add bbox to image
                         c = int(cls)  # integer class
-                        label = None if hide_labels else (names[c] if hide_conf else f"{names[c]} {conf:.2f}")
+                        # label = None if hide_labels else (names[c] if hide_conf else f"{names[c]} {conf:.2f}")
+                        label = None if hide_labels else (names[c])
+
                         annotator.box_label(xyxy, label, color=colors(c, True))
+                        # annotator.box_label(xyxy, decode_str, color=colors(c, True))
+
+                        # todo 打标,只针对能够解析出来的打标画框；并且标签写解析出来的label，单独存一张图片。
+                        # todo 用一个字典来存 那些解析出来的box。
+                        # barcode_annotator.barcode_decode_and_label(xyxy, label, color=colors(c, True))
+                        # barcode_annotator.barcode_decode_and_label(xyxy, decode_str, color=colors(c, True))
+
                     if save_crop:
                         save_one_box(xyxy, imc, file=save_dir / "crops" / names[c] / f"{p.stem}.jpg", BGR=True)
+
+            if len(topo_dict) >0:
+                make_topology(pos_dict=topo_dict, fig_save_dir=save_dir / "topology.jpg")
 
             # Stream results
             im0 = annotator.result()
@@ -369,24 +406,30 @@ def parse_opt():
     # parser.add_argument("--weights", nargs="+", type=str, default=ROOT / "yolov5l.pt", help="model path or triton URL")
 
     #解码条形码
-    # parser.add_argument("--weights", nargs="+", type=str, default=ROOT / "runs/train/exp5/weights/best.pt", help="model path or triton URL")
-    parser.add_argument("--weights", nargs="+", type=str, default=ROOT / "runs/train/exp6/weights/best.pt", help="model path or triton URL")
+    # parser.add_argument("--weights", nargs="+", type=str, default=ROOT / "runs/train/exp7/weights/best.pt", help="model path or triton URL")
+    # parser.add_argument("--weights", nargs="+", type=str, default=ROOT / "runs/train/exp27/weights/best.pt", help="model path or triton URL")  #
 
-    parser.add_argument("--source", type=str, default=ROOT / "data/images", help="file/dir/URL/glob/screen/0(webcam)")
+    # parser.add_argument("--weights", nargs="+", type=str, default=ROOT / "runs/train/exp54/weights/best.pt", help="model path or triton URL")
+    # parser.add_argument("--weights", nargs="+", type=str, default=ROOT / "runs/train/exp58/weights/best.pt", help="model path or triton URL")
+    parser.add_argument("--weights", nargs="+", type=str, default=ROOT / "runs/train/exp64/weights/best.pt", help="model path or triton URL")
+
+    # parser.add_argument("--source", type=str, default=ROOT / "data/images/235", help="file/dir/URL/glob/screen/0(webcam)")
+    # parser.add_argument("--source", type=str, default=ROOT / "data/images/weini2", help="file/dir/URL/glob/screen/0(webcam)")
+    parser.add_argument("--source", type=str, default=ROOT / "data/images/图纸多码", help="file/dir/URL/glob/screen/0(webcam)")
+    # parser.add_argument("--source", type=str, default=ROOT / "data/images", help="file/dir/URL/glob/screen/0(webcam)")
     parser.add_argument("--data", type=str, default=ROOT / "data/coco128.yaml", help="(optional) dataset.yaml path")
-    parser.add_argument("--imgsz", "--img", "--img-size", nargs="+", type=int, default=[640], help="inference size h,w")
+    # parser.add_argument("--imgsz", "--img", "--img-size", nargs="+", type=int, default=[640], help="inference size h,w")
+    parser.add_argument("--imgsz", "--img", "--img-size", nargs="+", type=int, default=[1280], help="inference size h,w")
     parser.add_argument("--conf-thres", type=float, default=0.25, help="confidence threshold")
-    parser.add_argument("--iou-thres", type=float, default=0.45, help="NMS IoU threshold")
+    # parser.add_argument("--conf-thres", type=float, default=0.5, help="confidence threshold")
+    # parser.add_argument("--iou-thres", type=float, default=0.45, help="NMS IoU threshold")
+    # parser.add_argument("--iou-thres", type=float, default=0.45, help="NMS IoU threshold")
+    parser.add_argument("--iou-thres", type=float, default=0.1, help="NMS IoU threshold")
     parser.add_argument("--max-det", type=int, default=1000, help="maximum detections per image")
     parser.add_argument("--device", default="", help="cuda device, i.e. 0 or 0,1,2,3 or cpu")
     parser.add_argument("--view-img", action="store_true", help="show results")
     parser.add_argument("--save-txt", action="store_true", help="save results to *.txt")
-    parser.add_argument(
-        "--save-format",
-        type=int,
-        default=0,
-        help="whether to save boxes coordinates in YOLO format or Pascal-VOC format when save-txt is True, 0 for YOLO and 1 for Pascal-VOC",
-    )
+    parser.add_argument( "--save-format",type=int,default=0,help="whether to save boxes coordinates in YOLO format or Pascal-VOC format when save-txt is True, 0 for YOLO and 1 for Pascal-VOC",)
     parser.add_argument("--save-csv", action="store_true", help="save results in CSV format")
     parser.add_argument("--save-conf", action="store_true", help="save confidences in --save-txt labels")
     parser.add_argument("--save-crop", action="store_true", help="save cropped prediction boxes")
@@ -395,6 +438,7 @@ def parse_opt():
     parser.add_argument("--agnostic-nms", action="store_true", help="class-agnostic NMS")
     parser.add_argument("--augment", action="store_true", help="augmented inference")
     parser.add_argument("--visualize", action="store_true", help="visualize features")
+    # parser.add_argument("--visualize", action="store_true",default='True', help="visualize features")
     parser.add_argument("--update", action="store_true", help="update all models")
     parser.add_argument("--project", default=ROOT / "runs/detect", help="save results to project/name")
     parser.add_argument("--name", default="exp", help="save results to project/name")

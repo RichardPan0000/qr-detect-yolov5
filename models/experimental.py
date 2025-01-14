@@ -8,6 +8,14 @@ import torch
 import torch.nn as nn
 
 from utils.downloads import attempt_download
+import platform
+import pathlib
+
+# 如果模型文件是在linux上保存（序列化）的，然后在windows上加载，路径报错问题，将路径方式替换一下即可
+plt=platform.system()
+if plt=='Windows':
+    # pathlib.WindowsPath=pathlib.PosixPath
+    pathlib.PosixPath=pathlib.WindowsPath
 
 
 class Sum(nn.Module):

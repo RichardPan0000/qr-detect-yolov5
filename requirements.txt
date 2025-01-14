@@ -47,3 +47,9 @@ setuptools>=70.0.0 # Snyk vulnerability fix
 # mss  # screenshots
 # albumentations>=1.0.3
 # pycocotools>=2.0.6  # COCO mAP
+fastapi
+qreader==3.14
+qrdet==2.5
+python-multipart
+uvicorn
+dill

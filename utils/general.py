@@ -1007,7 +1007,96 @@ def clip_segments(segments, shape):
         segments[:, 0] = segments[:, 0].clip(0, shape[1])  # x
         segments[:, 1] = segments[:, 1].clip(0, shape[0])  # y
 
+def keep_one_non_max_suppression(
+    prediction,
+    conf_thres=0.25,
+    iou_thres=0.45,
+    classes=None,
+    agnostic=False,
+    multi_label=False,
+    labels=(),
+    max_det=300,
+    nm=0,  # number of masks
+):
+    # Checks
+    assert 0 <= conf_thres <= 1, f"Invalid Confidence threshold {conf_thres}, valid values are between 0.0 and 1.0"
+    assert 0 <= iou_thres <= 1, f"Invalid IoU {iou_thres}, valid values are between 0.0 and 1.0"
+    if isinstance(prediction, (list, tuple)):
+        prediction = prediction[0]  # select only inference output
 
+    device = prediction.device
+    bs = prediction.shape[0]  # batch size
+    nc = prediction.shape[2] - nm - 5  # number of classes
+    xc = prediction[..., 4] > conf_thres  # candidates
+
+    # Settings
+    max_wh = 7680  # maximum box width and height
+    max_nms = 30000  # maximum number of boxes into torchvision.ops.nms()
+    time_limit = 0.5 + 0.05 * bs  # seconds to quit after
+    multi_label &= nc > 1
+    merge = False  # use merge-NMS
+
+    output = [torch.zeros((0, 6 + nm), device=prediction.device)] * bs
+    for xi, x in enumerate(prediction):  # image index, image inference
+        x = x[xc[xi]]  # confidence
+
+        if labels and len(labels[xi]):
+            lb = labels[xi]
+            v = torch.zeros((len(lb), nc + nm + 5), device=x.device)
+            v[:, :4] = lb[:, 1:5]  # box
+            v[:, 4] = 1.0  # conf
+            v[range(len(lb)), lb[:, 0].long() + 5] = 1.0  # cls
+            x = torch.cat((x, v), 0)
+
+        if not x.shape[0]:
+            continue
+
+        x[:, 5:] *= x[:, 4:5]  # conf = obj_conf * cls_conf
+
+        box = xywh2xyxy(x[:, :4])
+        mask = x[:, 5 + nc:]  # zero columns if no masks
+
+        if multi_label:
+            i, j = (x[:, 5:5 + nc] > conf_thres).nonzero(as_tuple=False).T
+            x = torch.cat((box[i], x[i, 5 + j, None], j[:, None].float(), mask[i]), 1)
+        else:
+            conf, j = x[:, 5:5 + nc].max(1, keepdim=True)
+            x = torch.cat((box, conf, j.float(), mask), 1)[conf.view(-1) > conf_thres]
+
+        if classes is not None:
+            x = x[(x[:, 5:6] == torch.tensor(classes, device=x.device)).any(1)]
+
+        n = x.shape[0]
+        if not n:
+            continue
+        x = x[x[:, 4].argsort(descending=True)[:max_nms]]  # sort by confidence and remove excess boxes
+
+        # Batched NMS
+        c = x[:, 5:6] * (0 if agnostic else max_wh)  # classes
+        boxes, scores = x[:, :4] + c, x[:, 4]
+        i = torchvision.ops.nms(boxes, scores, iou_thres)
+        i = i[:max_det]
+
+        # 新增：保留同一区域的最高置信度类别框
+        kept_boxes = []
+        for idx in i:
+            box = x[idx, :4]
+            class_id = x[idx, 5]
+            confidence = x[idx, 4]
+            overlap = False
+
+            for kept_box in kept_boxes:
+                iou = box_iou(box.unsqueeze(0), kept_box[:4].unsqueeze(0)).item()
+                if iou > iou_thres and class_id != kept_box[5]:
+                    overlap = True
+                    break
+
+            if not overlap:
+                kept_boxes.append(x[idx])
+
+        output[xi] = torch.stack(kept_boxes) if kept_boxes else x[i]
+
+    return output
 def non_max_suppression(
     prediction,
     conf_thres=0.25,
