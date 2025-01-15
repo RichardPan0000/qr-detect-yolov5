@@ -145,7 +145,7 @@ async def predict_bak(file: UploadFile = File(...)):
         )
 
 
-@app.post("/predict/")
+@app.post("/predict3/")
 async def predict(file: UploadFile = File(...)):
 
     # 读取上传的图片
@@ -159,40 +159,6 @@ async def predict(file: UploadFile = File(...)):
     with open(temp_path, "wb") as f:
         f.write(image_data)
 
-    # # 设置检测参数
-    # detect_args = {
-    #     "weights": WEIGHTS_PATH,
-    #     "source": str(temp_path),
-    #     "data": ROOT / "data/qr-custom-data.yaml",
-    #     "imgsz": (1280, 1280),
-    #     "conf_thres": 0.7,
-    #     "iou_thres": 0.45,
-    #     "max_det": 1000,
-    #     "device": DEVICE,
-    #     "view_img": False,
-    #     "save_txt": False,
-    #     "save_conf": False,
-    #     "save_crop": False,
-    #     "nosave": False,
-    #     "classes": None,
-    #     "agnostic_nms": False,
-    #     "augment": False,
-    #     "visualize": False,
-    #     "update": False,
-    #     "project": ROOT / "runs/detect",
-    #     "name": "exp",
-    #     "exist_ok": False,
-    #     "line_thickness": 3,
-    #     "hide_labels": False,
-    #     "hide_conf": False,
-    #     "half": False,
-    #     "dnn": False,
-    #     "vid_stride": 1,
-    #     "tilt":False,
-    #     "use_config":True,
-    #     "qr_anchor_config_path": ROOT/'config/qr_anchor_config_transparent_paper.yaml',
-    #     "class_to_use": "Marker",
-    # }
     # 设置检测参数
     detect_args = {
         "weights": WEIGHTS_PATH,
@@ -245,6 +211,72 @@ async def predict(file: UploadFile = File(...)):
         }
     )
 
+
+@app.post("/predict/")
+async def predict(file: UploadFile = File(...),tilt:bool=True,class_to_use:str="Marker"):
+
+    # 读取上传的图片
+    image_data = await file.read()
+
+    # 保存临时文件
+    temp_dir = ROOT / "temp"
+    temp_dir.mkdir(exist_ok=True)
+    temp_path = temp_dir / file.filename
+
+    with open(temp_path, "wb") as f:
+        f.write(image_data)
+
+    # 设置检测参数
+    detect_args = {
+        "weights": WEIGHTS_PATH,
+        "source": str(temp_path),
+        "data": ROOT / "data/qr-custom-data.yaml",
+        "imgsz": (1280, 1280),
+        "conf_thres": 0.7,
+        "iou_thres": 0.45,
+        "max_det": 1000,
+        "device": device,
+        "view_img": False,
+        "save_txt": False,
+        "save_conf": False,
+        "save_crop": False,
+        "nosave": False,
+        "classes": None,
+        "agnostic_nms": False,
+        "augment": False,
+        "visualize": False,
+        "update": False,
+        "project": ROOT / "runs/detect",
+        "name": "exp",
+        "exist_ok": False,
+        "line_thickness": 3,
+        "hide_labels": False,
+        "hide_conf": False,
+        "half": False,
+        "dnn": False,
+        "vid_stride": 1,
+        "tilt": tilt,
+        "use_config": True,
+        "qr_anchor_config_path": ROOT / 'config/qr_anchor_config_transparent_paper.yaml',
+        "class_to_use": class_to_use,
+        "model": model,
+    }
+
+    # 运行检测
+    results = run(**detect_args)
+
+    # 清理临时文件
+    if temp_path.exists():
+        temp_path.unlink()
+
+    return JSONResponse(
+        status_code=200,
+        content={
+            "success": True,
+            "message": "Detection completed successfully",
+            "results": results if results else []
+        }
+    )
 if __name__ == "__main__":
     import uvicorn
 
