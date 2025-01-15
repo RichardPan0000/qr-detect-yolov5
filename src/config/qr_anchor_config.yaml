@@ -1,0 +1,5 @@
+mark1_pos: [-1, -1]
+mark2_pos: [0, 1000]
+mark3_pos: [1000, 1000]
+mark4_pos: [1000, 0]
+scale: 100
