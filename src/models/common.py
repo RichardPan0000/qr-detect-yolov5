@@ -811,7 +811,7 @@ class AutoShape(nn.Module):
     amp = False  # Automatic Mixed Precision (AMP) inference
 
     def __init__(self, model, verbose=True):
-        """Initializes YOLOv5 model for inference, setting up attributes and preparing model for evaluation."""
+        """Initializes model for inference, setting up attributes and preparing model for evaluation."""
         super().__init__()
         if verbose:
             LOGGER.info("Adding AutoShape... ")
