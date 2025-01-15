@@ -35,9 +35,9 @@ except (ImportError, AssertionError):
 
 from ultralytics.utils.plotting import Annotator, colors, save_one_box
 
-from src.utils import TryExcept
-from src.utils.dataloaders import exif_transpose, letterbox
-from src.utils.general import (
+from utils import TryExcept
+from utils.dataloaders import exif_transpose, letterbox
+from utils.general import (
     LOGGER,
     ROOT,
     Profile,
@@ -54,7 +54,7 @@ from src.utils.general import (
     xyxy2xywh,
     yaml_load,
 )
-from src.utils.torch_utils import copy_attr, smart_inference_mode
+from utils.torch_utils import copy_attr, smart_inference_mode
 
 
 def autopad(k, p=None, d=1):
@@ -473,7 +473,7 @@ class DetectMultiBackend(nn.Module):
         #   TensorFlow Lite:                *.tflite
         #   TensorFlow Edge TPU:            *_edgetpu.tflite
         #   PaddlePaddle:                   *_paddle_model
-        from src.models.experimental import attempt_download, attempt_load  # scoped to avoid circular import
+        from models.experimental import attempt_download, attempt_load  # scoped to avoid circular import
 
         super().__init__()
         w = str(weights[0] if isinstance(weights, list) else weights)
@@ -661,7 +661,7 @@ class DetectMultiBackend(nn.Module):
         elif triton:  # NVIDIA Triton Inference Server
             LOGGER.info(f"Using {w} as Triton Inference Server...")
             check_requirements("tritonclient[all]")
-            from src.utils.triton import TritonRemoteModel
+            from utils.triton import TritonRemoteModel
 
             model = TritonRemoteModel(url=w)
             nhwc = model.runtime.startswith("tensorflow")
@@ -778,8 +778,8 @@ class DetectMultiBackend(nn.Module):
         Example: path='path/to/model.onnx' -> type=onnx
         """
         # types = [pt, jit, onnx, xml, engine, coreml, saved_model, pb, tflite, edgetpu, tfjs, paddle]
-        from src.export import export_formats
-        from src.utils.downloads import is_url
+        from export import export_formats
+        from utils.downloads import is_url
 
         sf = list(export_formats().Suffix)  # export suffixes
         if not is_url(p, check=False):

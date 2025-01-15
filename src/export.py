@@ -67,8 +67,8 @@ if str(ROOT) not in sys.path:
 if platform.system() != "Windows":
     ROOT = Path(os.path.relpath(ROOT, Path.cwd()))  # relative
 
-from src.models.experimental import attempt_load
-from src.models.yolo import ClassificationModel, Detect, DetectionModel, SegmentationModel
+from models.experimental import attempt_load
+from models.yolo import ClassificationModel, Detect, DetectionModel, SegmentationModel
 from utils.dataloaders import LoadImages
 from utils.general import (
     LOGGER,
@@ -749,7 +749,7 @@ def export_saved_model(
         import tensorflow as tf
     from tensorflow.python.framework.convert_to_constants import convert_variables_to_constants_v2
 
-    from src.models import TFModel
+    from models import TFModel
 
     LOGGER.info(f"\n{prefix} starting export with tensorflow {tf.__version__}...")
     if tf.__version__ > "2.13.1":
@@ -882,7 +882,7 @@ def export_tflite(
     converter.target_spec.supported_types = [tf.float16]
     converter.optimizations = [tf.lite.Optimize.DEFAULT]
     if int8:
-        from src.models import representative_dataset_gen
+        from models import representative_dataset_gen
 
         dataset = LoadImages(check_dataset(check_yaml(data))["train"], img_size=imgsz, auto=False)
         converter.representative_dataset = lambda: representative_dataset_gen(dataset, ncalib=100)

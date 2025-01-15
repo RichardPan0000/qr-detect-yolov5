@@ -27,7 +27,7 @@ import torch
 import torch.nn as nn
 from tensorflow import keras
 
-from src.models.common import (
+from models.common import (
     C3,
     SPP,
     SPPF,
@@ -42,10 +42,10 @@ from src.models.common import (
     Focus,
     autopad,
 )
-from src.models.experimental import MixConv2d, attempt_load
-from src.models.yolo import Detect, Segment
-from src.utils.activations import SiLU
-from src.utils.general import LOGGER, make_divisible, print_args
+from models.experimental import MixConv2d, attempt_load
+from models.yolo import Detect, Segment
+from utils.activations import SiLU
+from utils.general import LOGGER, make_divisible, print_args
 
 
 class TFBN(keras.layers.Layer):

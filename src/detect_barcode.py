@@ -37,7 +37,7 @@ from pathlib import Path
 
 import torch
 
-from src.barcode_decoder.barcode_decode_v2 import BarcodeAnnotator
+from barcode_decoder.barcode_decode_v2 import BarcodeAnnotator
 
 FILE = Path(__file__).resolve()
 ROOT = FILE.parents[0]  # YOLOv5 root directory
@@ -47,7 +47,7 @@ ROOT = Path(os.path.relpath(ROOT, Path.cwd()))  # relative
 
 from ultralytics.utils.plotting import Annotator, colors, save_one_box
 
-from src.models.common import DetectMultiBackend
+from models.common import DetectMultiBackend
 from utils.dataloaders import IMG_FORMATS, VID_FORMATS, LoadImages, LoadScreenshots, LoadStreams
 from utils.general import (
     LOGGER,
@@ -66,7 +66,7 @@ from utils.general import (
     xyxy2xywh,
 )
 from utils.torch_utils import select_device, smart_inference_mode
-from src.myutils.topology_util import make_topology
+from myutils.topology_util import make_topology
 
 
 @smart_inference_mode()

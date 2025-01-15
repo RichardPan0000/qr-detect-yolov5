@@ -7,7 +7,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-from src.utils.downloads import attempt_download
+from utils.downloads import attempt_download
 import platform
 import pathlib
 
@@ -99,7 +99,7 @@ def attempt_load(weights, device=None, inplace=True, fuse=True):
 
     Example inputs: weights=[a,b,c] or a single model weights=[a] or weights=a.
     """
-    from src.models.yolo import Detect, Model
+    from models.yolo import Detect, Model
 
     model = Ensemble()
     for w in weights if isinstance(weights, list) else [weights]:

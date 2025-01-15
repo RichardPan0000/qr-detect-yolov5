@@ -5,7 +5,8 @@
 # gitpython>=3.1.30
 matplotlib>=3.3
 numpy>=1.23.5
-opencv-python>=4.1.1
+# opencv-python>=4.1.1
+# opencv-python-headless>=4.1.2.30
 pillow>=10.3.0
 psutil  # system resources
 PyYAML>=5.3.1
@@ -53,6 +54,7 @@ setuptools>=70.0.0 # Snyk vulnerability fix
 # pycocotools>=2.0.6  # COCO mAP
 fastapi
 qreader==3.14
+pyzbar==0.1.9
 qrdet==2.5
 python-multipart
 uvicorn

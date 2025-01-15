@@ -10,7 +10,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from src.barcode_decoder.barcode_decode_v2 import BarcodeAnnotator
+from barcode_decoder.barcode_decode_v2 import BarcodeAnnotator
 
 FILE = Path(__file__).resolve()
 ROOT = FILE.parents[0]  # YOLOv5 root directory
@@ -20,7 +20,7 @@ ROOT = Path(os.path.relpath(ROOT, Path.cwd()))  # relative
 
 from ultralytics.utils.plotting import Annotator, colors, save_one_box
 
-from src.models.common import DetectMultiBackend
+from models.common import DetectMultiBackend
 from utils.dataloaders import IMG_FORMATS, VID_FORMATS, LoadImages, LoadScreenshots, LoadStreams
 from utils.general import (
     LOGGER,
@@ -38,11 +38,11 @@ from utils.general import (
     strip_optimizer,
     xyxy2xywh,
 )
-from src.myutils.find_angle_vertex import find_right_angle_vertex, sort_boxes_by_center_angle
+from myutils.find_angle_vertex import find_right_angle_vertex, sort_boxes_by_center_angle
 from utils.torch_utils import select_device, smart_inference_mode
-from src.myutils.point_mapping import get_transformed_box, get_transformed_box_four, get_transformed_quad_xyes_four, \
+from myutils.point_mapping import get_transformed_box, get_transformed_box_four, get_transformed_quad_xyes_four, \
     get_transformed_quad_xyes
-from src.myutils.find_which_box2 import TableAffineClass,MarkerAffineClass
+from myutils.find_which_box2 import TableAffineClass,MarkerAffineClass
 @smart_inference_mode()
 def run(
     weights=ROOT / "yolov5s.pt",  # model path or triton URL

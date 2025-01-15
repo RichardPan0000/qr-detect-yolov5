@@ -7,8 +7,8 @@ from PIL import __version__ as pil_version
 from ultralytics.utils.checks import check_font, check_version, is_ascii
 from collections import defaultdict
 from qreader import QReader
-from src.myutils.QReader_v2 import QReader_v2
-from src.myutils.time_utils import method_using_time
+from myutils.QReader_v2 import QReader_v2
+from myutils.time_utils import method_using_time
 
 # count_map=defaultdict(int)
 # pic_count_map=dict()

@@ -31,7 +31,7 @@ from qrdet import (
     # QRDetector,
     crop_qr,
 )
-from src.myutils.qrdet_v2 import QRDetector
+from myutils.qrdet_v2 import QRDetector
 
 _SHARPEN_KERNEL = np.array(
     ((-1.0, -1.0, -1.0), (-1.0, 9.0, -1.0), (-1.0, -1.0, -1.0)), dtype=np.float32

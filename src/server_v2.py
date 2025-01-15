@@ -3,8 +3,8 @@ from fastapi.responses import JSONResponse
 from pathlib import Path
 import sys
 
-from src.utils.torch_utils import select_device
-from src.models.common import DetectMultiBackend
+from utils.torch_utils import select_device
+from models.common import DetectMultiBackend
 # 添加项目根目录到系统路径
 ROOT = Path(__file__).parent
 if str(ROOT) not in sys.path:
