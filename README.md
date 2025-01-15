@@ -50,6 +50,13 @@ After running inference, the results will include:
 
 - [YOLOv5 Official Repository](https://github.com/ultralytics/yolov5)
 - [YOLOv5 Documentation](https://docs.ultralytics.com/)
+## License
+
+This project is licensed under the AGPL-3.0 License.
+
+---
+
+*Note*: This README provides a general framework. Customize it based on your project's specific details and requirements. 
 
 ## Citation
 
@@ -67,10 +74,3 @@ If you use YOLOv5 in your work, please cite it as follows:
   orcid = {0000-0001-5950-6979}
 }
 
-## License
-
-This project is licensed under the AGPL-3.0 License.
-
----
-
-*Note*: This README provides a general framework. Customize it based on your project's specific details and requirements. 
