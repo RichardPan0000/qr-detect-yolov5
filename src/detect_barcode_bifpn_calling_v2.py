@@ -57,6 +57,9 @@ class ResponseData:
         self.angles=None
         self.table=None
         self.table_attr=None
+        self.width_ret=None
+        self.height_ret=None
+
     def to_json(self):
         return json.dumps(asdict(self))
 
@@ -194,6 +197,7 @@ def run(
             if model.xml and im.shape[0] > 1:
                 ims = torch.chunk(im, im.shape[0], 0)
 
+        t_sii=time.time()
         # Inference
         with dt[1]:
             visualize = False
@@ -209,6 +213,7 @@ def run(
                 pred = [pred, None]
             else:
                 pred = model(im, augment=augment, visualize=visualize)
+        print('时间 inference time',time.time()-t_sii) # 差不多0.01s左右。
         # NMS
         with dt[2]:
             pred = non_max_suppression(pred, conf_thres, iou_thres, classes, agnostic_nms, max_det=max_det)
@@ -371,11 +376,15 @@ def run(
                 # 进行判断，到底使用什么处理方式
 
                 if class_to_use == "Marker":
-                    angle_rad=boxAffineClass.get_angle_via_quadxy(
+                    angle_rad,rec_centers,width_ret,height_ret=boxAffineClass.get_angle_via_quadxy(
                          transformed_quad_xyes, tilt=tilt
                     )
                     # response_data.angles=angle_rad
                     response_data.add_attribute('angles', angle_rad)
+                    response_data.add_attribute('rec_centers', rec_centers)
+                    response_data.add_attribute('width_ret', width_ret)
+                    response_data.add_attribute('height_ret', height_ret)
+
                 else:
                     table_box_dict=boxAffineClass.get_table_boxes(
                         transformed_boxes
@@ -403,13 +412,16 @@ def run(
                 transformed_boxes = get_transformed_box_four(qr_boxes, src_point, dst_point)
                 transformed_quad_xyes = get_transformed_quad_xyes_four(quad_xyes, src_point, dst_point)
                 # response_data.boxes=transformed_boxes
-                response_data.add_attribute('boxes',transformed_boxes)
+
 
                 if class_to_use == "Marker":
                     # Use MarkerAffineClass visualization method
-                    angle_rad=boxAffineClass.get_angle_via_quadxy(transformed_quad_xyes)
+                    angle_rad,rec_centers,width_ret,height_ret=boxAffineClass.get_angle_via_quadxy(transformed_quad_xyes,tilt=tilt)
                     # response_data.angles=angle_rad
                     response_data.add_attribute('angles', angle_rad)
+                    response_data.add_attribute('rec_centers', rec_centers)
+                    response_data.add_attribute('width_ret', width_ret)
+                    response_data.add_attribute('height_ret', height_ret)
                 else:
                     # Use TableAffineClass visualization method
                     table_box_dict=boxAffineClass.get_table_boxes(
@@ -420,34 +432,6 @@ def run(
             else:
                 # If no anchors, assume it's a plain paper form and return
                 pass
-            # # Stream results
-            # im0 = annotator.result()
-            # if view_img:
-            #     if platform.system() == "Linux" and p not in windows:
-            #         windows.append(p)
-            #         cv2.namedWindow(str(p), cv2.WINDOW_NORMAL | cv2.WINDOW_KEEPRATIO)  # allow window resize (Linux)
-            #         cv2.resizeWindow(str(p), im0.shape[1], im0.shape[0])
-            #     cv2.imshow(str(p), im0)
-            #     cv2.waitKey(1)  # 1 millisecond
-            #
-            # # Save results (image with detections)
-            # if save_img:
-            #     if dataset.mode == "image":
-            #         cv2.imwrite(save_path, im0)
-            #     else:  # 'video' or 'stream'
-            #         if vid_path[i] != save_path:  # new video
-            #             vid_path[i] = save_path
-            #             if isinstance(vid_writer[i], cv2.VideoWriter):
-            #                 vid_writer[i].release()  # release previous video writer
-            #             if vid_cap:  # video
-            #                 fps = vid_cap.get(cv2.CAP_PROP_FPS)
-            #                 w = int(vid_cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-            #                 h = int(vid_cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-            #             else:  # stream
-            #                 fps, w, h = 30, im0.shape[1], im0.shape[0]
-            #             save_path = str(Path(save_path).with_suffix(".mp4"))  # force *.mp4 suffix on results videos
-            #             vid_writer[i] = cv2.VideoWriter(save_path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (w, h))
-            #         vid_writer[i].write(im0)
 
         # Print time (inference-only)
         LOGGER.info(f"{s}{'' if len(det) else '(no detections), '}{dt[1].dt * 1E3:.1f}ms")
@@ -461,9 +445,18 @@ def run(
     boxes=response_data.boxes
     if isinstance(boxes,np.ndarray):
         boxes=boxes.tolist()
+    rec_centers=response_data.rec_centers
+
+    if isinstance(rec_centers,np.ndarray):
+        rec_centers=rec_centers.tolist()
+
     return {
         'angles':angles,
-        'boxes':boxes,
+        # 'boxes':boxes,''
+        'rec_centers':rec_centers,
+        'width_ret':response_data.width_ret,
+        'height_ret':response_data.height_ret
+
     }
 
 

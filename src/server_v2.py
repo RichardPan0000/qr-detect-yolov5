@@ -5,6 +5,10 @@ import sys
 
 from utils.torch_utils import select_device
 from models.common import DetectMultiBackend
+import os
+import torch
+
+
 # 添加项目根目录到系统路径
 ROOT = Path(__file__).parent
 if str(ROOT) not in sys.path:
@@ -279,5 +283,9 @@ async def predict(file: UploadFile = File(...),tilt:bool=True,class_to_use:str="
     )
 if __name__ == "__main__":
     import uvicorn
-
+    import torch
+    print('torch.__config__.show()',torch.__config__.show())
+    print('torch.get_num_threads()',torch.get_num_threads())
+    # torch.set_num_threads(12)
+    print('torch.get_num_threads()',torch.get_num_threads())
     uvicorn.run(app, host="0.0.0.0", port=3600)

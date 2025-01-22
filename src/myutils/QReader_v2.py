@@ -12,6 +12,7 @@ Github: https://github.com/Eric-Canas
 from __future__ import annotations
 
 import os
+import time
 import typing
 from dataclasses import dataclass
 from warnings import warn
@@ -276,17 +277,21 @@ class QReader_v2:
                     a tuple of strings with the decoded QR codes (or None if it can not be decoded).
 
         """
+
+        t1=time.time()
         batch_detections = self.detect_batch(images=images, is_bgr=is_bgr)
+        print('batch_detections time',time.time()-t1)
         # print('detecttions',detections)
         batch_decode_qrs=[]
 
+        t_s=time.time()
         for image,detections in zip(images,batch_detections):
             decoded_qrs = tuple(
                 self.decode(image=image, detection_result=detection)
                 for detection in detections
             )
             batch_decode_qrs.append(decoded_qrs)
-
+        print('解码时间',time.time()-t_s)
         if return_detections:
             return batch_decode_qrs, batch_detections
         else:

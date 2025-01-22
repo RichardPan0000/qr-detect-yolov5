@@ -293,7 +293,6 @@ class BarcodeAnnotator:
 
         # qreader_reader = QReader()
         qreader_reader=QReader_v2()
-        print('roi_area',roi_area)
         try :
             qreader_out,detections = qreader_reader.detect_and_decode(image=roi,return_detections=True) #  roi ndarray(178,173,3)
             # print('detections',detections)
@@ -337,7 +336,7 @@ class BarcodeAnnotator:
         roi = self.im[int(p1[1]):int(p2[1]), int(p1[0]):int(p2[0])]
         roi_area = (p2[0] - p1[0]) * (p2[1] - p1[1])
         time2 = time.time() - time1
-        print('时间 time2', time2)
+        # print('时间 time2', time2)
         if roi_area <= 0:
             return '', None
         global idx
@@ -399,10 +398,8 @@ class BarcodeAnnotator:
         t_b=time.time()
         qreader_reader = QReader_v2()
         print('模型加载时间',time.time()-t_b)
-        print('roi_area', roi_area)
         try:
             batch_qreader_out, batch_detections = qreader_reader.detect_and_decode_batch(images=roies_input, return_detections=True)
-            print('解码结果',batch_qreader_out)
         except Exception as e:
             print(e)
             return decode_str,quad_xyes

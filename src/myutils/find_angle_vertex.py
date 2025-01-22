@@ -195,10 +195,10 @@ def sort_boxes_by_center_angle(boxes_list,clazz_list):
         (angle_class_2 - angle) % (2 * math.pi) for angle in angles
     ]
 
-    print('adjusted_angles',adjusted_angles)
+    # print('adjusted_angles',adjusted_angles)
     # 按调整后的角度排序
     sorted_indices = np.argsort(adjusted_angles)
-    print('sorted_indices',sorted_indices)
+    # print('sorted_indices',sorted_indices)
     sorted_boxes = [boxes_list[i] for i in sorted_indices]
     return [compute_center(sorted_boxes[0]),compute_center(sorted_boxes[1]),compute_center(sorted_boxes[2]),compute_center(sorted_boxes[3])]
     # return sorted_boxes

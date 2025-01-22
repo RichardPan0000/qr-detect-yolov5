@@ -195,7 +195,6 @@ def run(
                 im = im[None]  # expand for batch dim
             if model.xml and im.shape[0] > 1:
                 ims = torch.chunk(im, im.shape[0], 0)
-
         # Inference
         with dt[1]:
             visualize = False

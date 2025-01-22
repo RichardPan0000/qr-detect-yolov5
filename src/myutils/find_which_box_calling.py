@@ -1,6 +1,6 @@
 import matplotlib.pyplot as plt
 import numpy as np
-from myutils.qr_rotate_utils import process_quad
+from myutils.qr_rotate_utils import process_quad,process_quad_v2
 import yaml
 
 
@@ -338,15 +338,31 @@ class MarkerAffineClass(BaseAffineClass):
         """可视化锚点和框的位置"""
         angle_rad=None
         if quad_xyes is not None:
-            angle_rad=np.full(len(quad_xyes),90)
+            angle_rad=np.full(len(quad_xyes),0.00000000)
+        rec_centers=[]
         # 处理框的绘制
-        if tilt and quad_xyes is not None:
+        width_a=np.zeros(len(quad_xyes))
+        height_a=np.zeros(len(quad_xyes))
+
+        if tilt and quad_xyes is not None: # 这里还有些问题，需要看看
             for i,quad_xy in enumerate(quad_xyes):
                 quad_xy = np.array(quad_xy, dtype=np.float32)
-                rectangle, one_angle_rad = process_quad(quad_xy)
+                rectangle, one_angle_rad,(width,height) = process_quad_v2(quad_xy)
+                width_a[i]=width
+                height_a[i]=height
+                rectangle=rectangle.tolist()
+                rec_center=np.mean(rectangle,axis=0)
+                rec_center=rec_center.tolist()
+                # print('rec_center',rec_center)
+                rec_centers.append(rec_center)
+                # print('one_angle_rad',one_angle_rad)
+
+                # print('one_angle_rad',one_angle_rad)
                 angle_rad[i]=one_angle_rad
+        width_ret=np.mean(width_a)
+        height_ret=np.mean(height_a)
         # 返回角度
-        return angle_rad
+        return angle_rad,rec_centers,width_ret,height_ret
 
 
 

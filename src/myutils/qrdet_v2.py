@@ -9,6 +9,7 @@ Date: 11-12-2022
 
 from __future__ import annotations
 import os
+import time
 
 import numpy as np
 import requests
@@ -183,6 +184,7 @@ class QRDetector:
         if not all(img.ndim == 3 and img.shape[2] == 3 for img in imgs):
             raise ValueError("Each image in `imgs` must have shape (H, W, C) where C=3.")
 
+        t2=time.time()
         # Find maximum height and width
         max_height = max(img.shape[0] for img in imgs)
         max_width = max(img.shape[1] for img in imgs)
@@ -216,20 +218,24 @@ class QRDetector:
         # Stack images into a batch tensor (B, C, H, W)
         batch_img_tensor = torch.stack(batch_images, dim=0)  # shape: (N, 3, H, W)
 
+        print('准备数据时间',time.time()-t2)
         # Predict using the YOLOv5 model
+        t1=time.time()
+        print('torch.get_num_threads 22',torch.get_num_threads())
         model_results = self.model.predict(
             source=batch_img_tensor,
             conf=self._conf_th,
             iou=self._nms_iou,
             half=False,
-            device=None,
+            device='cpu',
+            # device=None,
             max_det=100,
             augment=False,
             agnostic_nms=True,
             classes=None,
             verbose=False
         )
-
+        print('预测时间',time.time()-t1)  # 预测需要6s，其它的6s在前面的处理
         # Process the model results
         results = []
         for img_name, prepared_img, single_result in zip(batch_file_names, prepared_imgs, model_results):

@@ -108,23 +108,25 @@ def process_quad(quad_xy):
 
     return rotated_rect,angle_rad
 
+def process_quad_v2(quad_xy):
+    """处理四边形：计算角度和生成旋转矩形"""
+    # 1. 计算倾斜角度
+    angle = calculate_rotation_angle(quad_xy)
 
-# def process_quad(quad_xy):
-#     """处理四边形：计算最小外接矩形"""
-#     # 确保输入是numpy数组
-#     points = np.array(quad_xy, dtype=np.float32)
-#
-#     # 使用OpenCV找到最小外接矩形
-#     rect = cv2.minAreaRect(points)
-#     box = cv2.boxPoints(rect)
-#     box = np.array(box)
-#
-#     # 获取角度
-#     angle = rect[2]
-#     if angle < -45:
-#         angle += 90
-#
-#     return box, np.radians(angle)
+    # 2. 计算中心点
+    center = np.mean(quad_xy, axis=0)
+
+    # 3. 计算近似矩形的宽度和高度
+    width, height = calculate_rectangle_size(quad_xy)
+
+    # 4. 创建旋转矩形
+    rotated_rect,angle_rad = create_rotated_rectangle(center, width, height, angle)
+
+    # print(f"Center: ({center[0]:.2f}, {center[1]:.2f})")
+    # print(f"Width: {width:.2f}, Height: {height:.2f}")
+
+    return rotated_rect,angle_rad,(width,height)
+
 # 使用示例
 if __name__ == "__main__":
     # 原始四边形数据
