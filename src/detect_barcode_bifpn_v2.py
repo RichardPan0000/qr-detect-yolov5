@@ -540,7 +540,7 @@ def parse_opt():
     # parser.add_argument("--source", type=str, default=ROOT / "data/images/weini3", help="file/dir/URL/glob/screen/0(webcam)")
     # parser.add_argument("--source", type=str, default=ROOT / "data/images/weini4", help="file/dir/URL/glob/screen/0(webcam)")
     # parser.add_argument("--source", type=str, default=ROOT / "data/images/four-mark-weini", help="file/dir/URL/glob/screen/0(webcam)")
-    parser.add_argument("--source", type=str, default=ROOT / "data/images/多码", help="file/dir/URL/glob/screen/0(webcam)")
+    parser.add_argument("--source", type=str, default=ROOT / "data/images/station_test1", help="file/dir/URL/glob/screen/0(webcam)")
     # parser.add_argument("--source", type=str, default=ROOT / "data/images/transparent_paper", help="file/dir/URL/glob/screen/0(webcam)")
     # parser.add_argument("--source", type=str, default=ROOT / "data/images/图纸", help="file/dir/URL/glob/screen/0(webcam)")
     # parser.add_argument("--source", type=str, default=ROOT / "data/images/实际", help="file/dir/URL/glob/screen/0(webcam)")

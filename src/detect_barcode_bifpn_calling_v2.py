@@ -5,10 +5,13 @@ import sys
 import time
 from pathlib import Path
 
+import cv2
 import numpy as np
 import torch
 
 from barcode_decoder.barcode_decode_v2 import BarcodeAnnotator
+from run_inference import  run_inference
+from myutils.qr_rotate_utils import correct_angles
 
 FILE = Path(__file__).resolve()
 ROOT = FILE.parents[0]  # YOLOv5 root directory
@@ -65,6 +68,10 @@ class ResponseData:
 
     def add_attribute(self,name,value):
         setattr(self,name,value)
+
+    def update_attributes(self,name:str,value):
+        if hasattr(self,name):
+            setattr(self,name,value)
 
 
 @smart_inference_mode()
@@ -242,13 +249,12 @@ def run(
 
             p = Path(p)  # to Path
             s += "{:g}x{:g} ".format(*im.shape[2:])  # print string
-            gn = torch.tensor(im0.shape)[[1, 0, 1, 0]]  # normalization gain whwh
-            imc = im0.copy() if save_crop else im0  # for save_crop
-            annotator = Annotator(im0, line_width=line_thickness, example=str(names))
+            # gn = torch.tensor(im0.shape)[[1, 0, 1, 0]]  # normalization gain whwh
+            # imc = im0.copy() if save_crop else im0  # for save_crop
+            # annotator = Annotator(im0, line_width=line_thickness, example=str(names))
             imc_bar=im0.copy()
+            imc_box = im0.copy() if save_crop else im0  # for save_crop
             barcode_annotator=BarcodeAnnotator(imc_bar, line_width=line_thickness, example=str(names))
-            topo_idx=0
-            topo_dict=dict()
             qr_boxes=[]
             quad_xyes=[]
             multi_roi=[]
@@ -275,6 +281,36 @@ def run(
                 start_t=time.time()
                 decode_strs,quad_xyes=barcode_annotator.barcode_decode_batch(multi_roi_input,multi_p[0])
                 print('batch_decode时间',time.time()-start_t)
+
+                #
+                roies_input=[]
+                roies_cord=[]
+                for box in multi_roi_input:
+                    time1 = time.time()
+                    box[0] = box[0] - 30
+                    box[1] = box[1] - 30
+                    box[2] = box[2] + 30
+                    box[3] = box[3] + 30
+                    p1, p2 = (int(box[0]), int(box[1])), (int(box[2]), int(box[3]))
+                    # roi=self.im[int(box[1]):int(box[1])+int(box[3]),int(box[0]):int(box[0])+int(box[2])] # h,w 如果是CV2的话，应该是h,w排列的
+                    roi = imc_box[int(p1[1]):int(p2[1]), int(p1[0]):int(p2[0])]
+                    # cv2.imshow('roi', roi)
+                    # cv2.waitKey(0)
+                    roies_input.append(roi)
+                    roies_cord.append(p1)
+                    time2 = time.time() - time1
+                    print('时间 time2', time2)
+
+                num_det_list=run_inference(roies_input)
+                # num_dets=np.stack(num_det_list,axis=0)
+                num_cords=[cord[:4] for cord in num_det_list]
+                # 坐标还原
+                for i,num_det in enumerate(num_det_list):
+                    p1=roies_cord[i]
+                    num_det_list[i][0]=p1[0]+num_det_list[i][0]
+                    num_det_list[i][1]=p1[1]+num_det_list[i][1]
+                    num_det_list[i][2]=p1[0]+num_det_list[i][2]
+                    num_det_list[i][3]=p1[1]+num_det_list[i][3]
 
             iddx=0
             if len(det):
@@ -318,16 +354,6 @@ def run(
                         mark_clazz_list.append(c) # 标记类别
                         decode_str=''
 
-                    # if save_txt:  # Write to file
-                    #     if save_format == 0:
-                    #         coords = (
-                    #             (xyxy2xywh(torch.tensor(xyxy).view(1, 4)) / gn).view(-1).tolist()
-                    #         )  # normalized xywh
-                    #     else:
-                    #         coords = (torch.tensor(xyxy).view(1, 4) / gn).view(-1).tolist()  # xyxy
-                    #     line = (cls, *coords, conf) if save_conf else (cls, *coords)  # label format
-                    #     with open(f"{txt_path}.txt", "a") as f:
-                    #         f.write(("%g " * len(line)).rstrip() % line + "\n")
 
                     # if save_img or save_crop or view_img:  # Add bbox to image
                     #     c = int(cls)  # integer class
@@ -371,6 +397,14 @@ def run(
                 dst_point=np.array(boxAffineClass.get_dst_point_four(),dtype=np.float32)[1:4]  #就拿mark1,mark2,mark3 就行
                 transformed_quad_xyes = get_transformed_quad_xyes(quad_xyes, src_point, dst_point)
                 transformed_boxes=get_transformed_box(qr_boxes,src_point,dst_point)
+
+
+                #  获取转换后的number坐标
+                transformed_num_dets=get_transformed_box(num_cords,src_point,dst_point)
+
+
+
+
                 # response_data.boxes=transformed_boxes
                 response_data.add_attribute('boxes',transformed_boxes)
                 # 进行判断，到底使用什么处理方式
@@ -413,6 +447,9 @@ def run(
                 transformed_quad_xyes = get_transformed_quad_xyes_four(quad_xyes, src_point, dst_point)
                 # response_data.boxes=transformed_boxes
 
+                #  获取转换后的number坐标
+                transformed_num_dets=get_transformed_box_four(num_cords,src_point,dst_point)
+
 
                 if class_to_use == "Marker":
                     # Use MarkerAffineClass visualization method
@@ -433,6 +470,21 @@ def run(
                 # If no anchors, assume it's a plain paper form and return
                 pass
 
+            # 角度校正
+            angles=response_data.angles
+            if isinstance(angles,np.ndarray):
+                angles=angles.tolist()
+            #
+            rec_centers = response_data.rec_centers
+
+            if isinstance(rec_centers, np.ndarray):
+                rec_centers = rec_centers.tolist()
+            angles=correct_angles(transformed_num_dets, rec_centers, angles)
+            response_data.angles=angles
+
+
+
+
         # Print time (inference-only)
         LOGGER.info(f"{s}{'' if len(det) else '(no detections), '}{dt[1].dt * 1E3:.1f}ms")
 
@@ -449,6 +501,9 @@ def run(
 
     if isinstance(rec_centers,np.ndarray):
         rec_centers=rec_centers.tolist()
+
+    # 进行校正角度
+
 
     return {
         'angles':angles,

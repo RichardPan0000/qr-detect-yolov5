@@ -1378,3 +1378,88 @@ def create_classification_dataloader(
         worker_init_fn=seed_worker,
         generator=generator,
     )  # or DataLoader(persistent_workers=True)
+
+
+class LoadMemoryImages(Dataset):
+    """自定义数据集类，用于从内存加载图像数据。"""
+
+    def __init__(self, images, img_size=640, stride=32, auto=True, transforms=None):
+        """
+        初始化数据集。
+
+        参数：
+            images (list): 包含图像数据的列表，每个元素是一个 NumPy 数组 或 PyTorch 张量。
+            img_size (int, tuple): 目标图像尺寸，默认为 640。
+            stride (int): 步幅，默认为 32。
+            auto (bool): 是否自动调整填充，默认为 True。
+            transforms (callable, optional): 可选的预处理函数，默认为 None。
+        """
+        self.images = images
+        self.img_size = img_size
+        self.stride = stride
+        self.auto = auto
+        self.transforms = transforms
+        self.nf = len(images)  # 图像数量
+
+    def __len__(self):
+        """返回数据集的大小。"""
+        return self.nf
+
+    def __getitem__(self, index):
+        """
+        获取指定索引的图像数据。
+
+        参数：
+            index (int): 图像索引。
+
+        返回：
+            tuple: 包含路径、处理后的图像、原始图像、视频捕获对象（始终为 None）和状态字符串的元组。
+        """
+        im0 = self.images[index]  # 获取原始图像
+
+        print('img_size',self.img_size)
+        # 处理图像
+        if self.transforms:
+            im = self.transforms(im0)  # 应用预处理函数
+        else:
+            im = letterbox(im0, self.img_size, stride=self.stride, auto=self.auto)[0]  # 填充调整
+            im = im.transpose((2, 0, 1))[::-1]  # HWC 转 CHW，BGR 转 RGB
+            im = np.ascontiguousarray(im)  # 保持连续内存
+
+        # im0_shape=im0.shape
+        # 转换为 PyTorch 张量
+        # im = torch.from_numpy(im).float()  # 转换为浮点型张量
+        # if im.ndimension() == 3:
+        #     im = im.unsqueeze(0)  # 添加批次维度
+        # <---------------------  添加保障处理代码  --------------------->
+        target_shape = tuple(self.img_size)
+        if isinstance(target_shape, int):
+            target_shape = (target_shape, target_shape)  # 如果 img_size 是整数，转换为正方形元组
+
+        current_shape = im.shape[1:]  # 获取 letterbox 处理后的图像的 HWC 形状 (去除通道维度)
+
+
+        if current_shape != target_shape:
+            # print(
+            #     f"警告: 图像索引 {index} 经过 letterbox 后形状异常: {current_shape}, 预期形状: {target_shape}。 正在进行强制填充...")
+            dh = target_shape[0] - current_shape[0]
+            dw = target_shape[1] - current_shape[1]
+
+            if dh < 0 or dw < 0:  # 理论上不应该出现 letterbox 后尺寸反而超过 img_size 的情况，但作为 safety check
+                im = im[:, :target_shape[0], :target_shape[1]]  # 裁剪到目标尺寸
+                # print(f"警告: 图像索引 {index} 尺寸超标，已进行裁剪。裁剪后形状: {im.shape[1:]}")
+            else:
+                pad_value = 114  # 使用 letterbox 默认的灰色填充值
+                pad_value=np.array(pad_value)
+                pad_bottom = max(0, dh)  # 确保 padding 值为非负数，以防万一出现负数
+                pad_right = max(0, dw)
+
+                im = np.pad(im, ((0, 0), (0, pad_bottom), (0, pad_right)), 'constant', constant_values=pad_value)
+                # print(f"图像索引 {index} 已完成右侧和底部填充，最终形状: {im.shape[1:]}")
+
+            assert im.shape[
+                   1:] == target_shape, f"图像索引 {index} 强制填充后，形状仍然不是目标形状 {target_shape}，而是 {im.shape[1:]}！请检查代码逻辑！"
+        # <---------------------  保障处理代码结束  --------------------->
+
+        # print(f"LoadMemoryImages im.shape: {im.shape}")  # <----  添加这行打印代码!
+        return torch.from_numpy(im), index, f"image {index + 1}/{self.nf}: "

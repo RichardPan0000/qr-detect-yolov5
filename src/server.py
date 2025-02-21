@@ -102,7 +102,9 @@ async def predict(file: UploadFile = File(...)):
             }
         )
 
-
+'''
+测试10.1.49.4 的
+'''
 if __name__ == "__main__":
     import uvicorn
 
